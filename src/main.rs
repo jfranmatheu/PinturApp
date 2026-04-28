@@ -442,16 +442,23 @@ impl PinturappUi {
 
     fn welcome_action_tile(ui: &mut egui::Ui, title: &str, hint: &str, description: &str) -> bool {
         let mut clicked = false;
-        Self::panel_card().show(ui, |ui| {
+        egui::Frame::default()
+            .fill(egui::Color32::from_rgb(23, 30, 42))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(54, 70, 92)))
+            .corner_radius(egui::CornerRadius::same(8))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+            ui.set_min_height(110.0);
             if ui
                 .add_sized(
-                    egui::vec2(190.0, 36.0),
+                    egui::vec2(ui.available_width(), 34.0),
                     egui::Button::new(egui::RichText::new(title).strong()),
                 )
                 .clicked()
             {
                 clicked = true;
             }
+            ui.add_space(4.0);
             ui.small(description);
             ui.add_space(2.0);
             Self::shortcut_chip(ui, hint);
@@ -586,9 +593,9 @@ impl PinturappUi {
                             Self::shortcut_chip(ui, "Ctrl+Shift+O");
                         });
                         ui.add_space(10.0);
-                        ui.horizontal_wrapped(|ui| {
+                        ui.columns(2, |cols| {
                             if Self::welcome_action_tile(
-                                ui,
+                                &mut cols[0],
                                 "New Project",
                                 "Ctrl+N",
                                 "Start from a clean project state.",
@@ -596,17 +603,9 @@ impl PinturappUi {
                                 self.request_load_action(PendingLoadAction::NewProject);
                                 dismiss_overlay = true;
                             }
+                            cols[0].add_space(8.0);
                             if Self::welcome_action_tile(
-                                ui,
-                                "Load Project",
-                                "Ctrl+O",
-                                "Open a .pinturaproj bundle.",
-                            ) {
-                                self.request_load_action(PendingLoadAction::OpenProjectPicker);
-                                dismiss_overlay = true;
-                            }
-                            if Self::welcome_action_tile(
-                                ui,
+                                &mut cols[0],
                                 "Load Autosave",
                                 "Ctrl+Shift+O",
                                 "Recover latest autosaved state.",
@@ -614,22 +613,34 @@ impl PinturappUi {
                                 self.request_load_action(PendingLoadAction::LoadAutosave);
                                 dismiss_overlay = true;
                             }
+                            cols[0].add_space(8.0);
                             if Self::welcome_action_tile(
-                                ui,
-                                "Load OBJ",
-                                "File Menu",
-                                "Import geometry into the viewport.",
-                            ) {
-                                self.pick_and_load_obj();
-                                dismiss_overlay = true;
-                            }
-                            if Self::welcome_action_tile(
-                                ui,
+                                &mut cols[0],
                                 "Load Texture",
                                 "File Menu",
                                 "Apply a base texture before painting.",
                             ) {
                                 self.pick_and_load_texture();
+                                dismiss_overlay = true;
+                            }
+
+                            if Self::welcome_action_tile(
+                                &mut cols[1],
+                                "Load Project",
+                                "Ctrl+O",
+                                "Open a .pinturaproj bundle.",
+                            ) {
+                                self.request_load_action(PendingLoadAction::OpenProjectPicker);
+                                dismiss_overlay = true;
+                            }
+                            cols[1].add_space(8.0);
+                            if Self::welcome_action_tile(
+                                &mut cols[1],
+                                "Load OBJ",
+                                "File Menu",
+                                "Import geometry into the viewport.",
+                            ) {
+                                self.pick_and_load_obj();
                                 dismiss_overlay = true;
                             }
                         });
