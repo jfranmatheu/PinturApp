@@ -100,16 +100,7 @@ impl PinturappUi {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.heading("3D Viewport");
             if let Some(mesh) = self.loaded_mesh.clone() {
-                ui.label(format!("Loaded: {}", mesh.source_path.display()));
-                ui.label(format!("Vertices: {}", mesh.vertices.len()));
-                ui.label(format!("Triangles: {}", mesh.indices.len() / 3));
-                if let Some(v0) = mesh.vertices.first() {
-                    ui.label(format!(
-                        "Sample Vertex: pos=({:.3}, {:.3}, {:.3}) uv=({:.3}, {:.3})",
-                        v0.position[0], v0.position[1], v0.position[2], v0.uv[0], v0.uv[1]
-                    ));
-                }
-
+                self.show_mesh_details(ui, &mesh);
                 ui.separator();
                 let available = ui.available_size_before_wrap();
                 let viewport_size = egui::vec2(available.x.max(240.0), available.y.max(240.0));
@@ -117,100 +108,138 @@ impl PinturappUi {
                 let rect = response.rect;
 
                 painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(26, 29, 35));
-
-                if response.dragged_by(egui::PointerButton::Secondary) {
-                    let delta = ui.ctx().input(|i| i.pointer.delta());
-                    self.orbit_yaw -= delta.x * 0.01;
-                    self.orbit_pitch = (self.orbit_pitch + delta.y * 0.01).clamp(-1.4, 1.4);
-                    self.is_dirty = true;
-                }
-
-                if response.hovered() {
-                    let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
-                    if scroll.abs() > f32::EPSILON {
-                        let zoom_factor = (1.0_f32 - scroll * 0.0015_f32).clamp(0.80_f32, 1.25_f32);
-                        self.orbit_distance = (self.orbit_distance * zoom_factor).clamp(0.25, 50.0);
-                        self.is_dirty = true;
-                    }
-                }
-
+                self.handle_camera_input(ui, &response);
                 let img_w = rect.width().max(1.0).round() as usize;
                 let img_h = rect.height().max(1.0).round() as usize;
-                let is_painting_now = response.hovered()
-                    && ui
-                        .ctx()
-                        .input(|i| i.pointer.button_down(egui::PointerButton::Primary));
-                if is_painting_now && !self.is_painting_stroke {
-                    self.begin_paint_stroke();
-                    self.is_painting_stroke = true;
-                } else if !is_painting_now {
-                    self.is_painting_stroke = false;
-                }
-
-                if is_painting_now {
-                    if let Some(pointer_pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
-                        if !rect.contains(pointer_pos) {
-                            self.is_painting_stroke = false;
-                        }
-                        let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
-                        let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);
-                        if let Some(uv) = pick_uv_at_screen(
-                            &mesh,
-                            self.mesh_center,
-                            self.mesh_fit_scale,
-                            self.orbit_yaw,
-                            self.orbit_pitch,
-                            self.orbit_distance,
-                            [img_w, img_h],
-                            [sx, sy],
-                        ) {
-                            self.paint_at_uv(uv);
-                        }
-                    }
-                }
-
-                let image = render_textured_preview(
-                    &mesh,
-                    self.mesh_center,
-                    self.mesh_fit_scale,
-                    self.orbit_yaw,
-                    self.orbit_pitch,
-                    self.orbit_distance,
-                    [img_w, img_h],
-                    self.albedo_texture.as_ref(),
-                );
-                self.update_preview_texture(ui.ctx(), image);
-                if let Some(texture) = &self.preview_texture {
-                    painter.image(
-                        texture.id(),
-                        rect,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
-                }
-
-                draw_mesh_wireframe(
-                    &painter,
-                    rect,
-                    &mesh,
-                    self.mesh_center,
-                    self.mesh_fit_scale,
-                    self.orbit_yaw,
-                    self.orbit_pitch,
-                    self.orbit_distance,
-                );
+                self.handle_paint_input(ui, &response, rect, &mesh, [img_w, img_h]);
+                self.draw_viewport_texture_and_wireframe(ui, &painter, rect, &mesh, [img_w, img_h]);
             } else {
                 self.is_painting_stroke = false;
                 ui.label("No mesh loaded yet. Use 'Load OBJ' to import a model with UVs.");
             }
-
-            if let Some(path) = &self.last_loaded_path {
-                ui.label(format!("Last file: {}", path.display()));
-            }
-
-            if let Some(err) = &self.last_error {
-                ui.colored_label(egui::Color32::RED, format!("Load error: {err}"));
-            }
+            self.show_viewport_footer(ui);
         });
+    }
+
+    fn show_mesh_details(&self, ui: &mut egui::Ui, mesh: &crate::io::mesh_loader::MeshData) {
+        ui.label(format!("Loaded: {}", mesh.source_path.display()));
+        ui.label(format!("Vertices: {}", mesh.vertices.len()));
+        ui.label(format!("Triangles: {}", mesh.indices.len() / 3));
+        if let Some(v0) = mesh.vertices.first() {
+            ui.label(format!(
+                "Sample Vertex: pos=({:.3}, {:.3}, {:.3}) uv=({:.3}, {:.3})",
+                v0.position[0], v0.position[1], v0.position[2], v0.uv[0], v0.uv[1]
+            ));
+        }
+    }
+
+    fn handle_camera_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
+        if response.dragged_by(egui::PointerButton::Secondary) {
+            let delta = ui.ctx().input(|i| i.pointer.delta());
+            self.orbit_yaw -= delta.x * 0.01;
+            self.orbit_pitch = (self.orbit_pitch + delta.y * 0.01).clamp(-1.4, 1.4);
+            self.is_dirty = true;
+        }
+
+        if response.hovered() {
+            let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
+            if scroll.abs() > f32::EPSILON {
+                let zoom_factor = (1.0_f32 - scroll * 0.0015_f32).clamp(0.80_f32, 1.25_f32);
+                self.orbit_distance = (self.orbit_distance * zoom_factor).clamp(0.25, 50.0);
+                self.is_dirty = true;
+            }
+        }
+    }
+
+    fn handle_paint_input(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        rect: egui::Rect,
+        mesh: &crate::io::mesh_loader::MeshData,
+        image_size: [usize; 2],
+    ) {
+        let is_painting_now = response.hovered()
+            && ui
+                .ctx()
+                .input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+        if is_painting_now && !self.is_painting_stroke {
+            self.begin_paint_stroke();
+            self.is_painting_stroke = true;
+        } else if !is_painting_now {
+            self.is_painting_stroke = false;
+        }
+
+        if is_painting_now {
+            if let Some(pointer_pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
+                if !rect.contains(pointer_pos) {
+                    self.is_painting_stroke = false;
+                }
+                let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
+                let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);
+                if let Some(uv) = pick_uv_at_screen(
+                    mesh,
+                    self.mesh_center,
+                    self.mesh_fit_scale,
+                    self.orbit_yaw,
+                    self.orbit_pitch,
+                    self.orbit_distance,
+                    image_size,
+                    [sx, sy],
+                ) {
+                    self.paint_at_uv(uv);
+                }
+            }
+        }
+    }
+
+    fn draw_viewport_texture_and_wireframe(
+        &mut self,
+        ui: &egui::Ui,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        mesh: &crate::io::mesh_loader::MeshData,
+        image_size: [usize; 2],
+    ) {
+        let image = render_textured_preview(
+            mesh,
+            self.mesh_center,
+            self.mesh_fit_scale,
+            self.orbit_yaw,
+            self.orbit_pitch,
+            self.orbit_distance,
+            image_size,
+            self.albedo_texture.as_ref(),
+        );
+        self.update_preview_texture(ui.ctx(), image);
+        if let Some(texture) = &self.preview_texture {
+            painter.image(
+                texture.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+        }
+
+        draw_mesh_wireframe(
+            painter,
+            rect,
+            mesh,
+            self.mesh_center,
+            self.mesh_fit_scale,
+            self.orbit_yaw,
+            self.orbit_pitch,
+            self.orbit_distance,
+        );
+    }
+
+    fn show_viewport_footer(&self, ui: &mut egui::Ui) {
+        if let Some(path) = &self.last_loaded_path {
+            ui.label(format!("Last file: {}", path.display()));
+        }
+
+        if let Some(err) = &self.last_error {
+            ui.colored_label(egui::Color32::RED, format!("Load error: {err}"));
+        }
     }
 }
