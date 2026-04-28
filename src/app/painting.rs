@@ -3,7 +3,6 @@ use crate::io::mesh_loader::MeshData;
 use crate::renderer::SurfaceHit;
 use glam::{Vec2, Vec3, vec3};
 use image::RgbaImage;
-use std::collections::HashSet;
 
 impl PinturappUi {
     pub(crate) fn clear_history(&mut self) {
@@ -71,15 +70,33 @@ impl PinturappUi {
         let Some((center_pos, world_radius)) = self.hit_brush_center_and_radius(mesh, hit, w, h) else {
             return;
         };
+        let Some(mask) = self.build_projected_brush_mask(mesh, center_pos, world_radius, w, h) else {
+            return;
+        };
+        if mask.touched.is_empty() {
+            return;
+        }
 
         let Some(texture) = self.albedo_texture.as_mut() else {
             return;
         };
-        let r2 = world_radius * world_radius;
         let src = self.brush_color.to_array();
         let src_alpha = src[3] as f32 / 255.0;
-        let mut touched_pixels: HashSet<usize> = HashSet::new();
-        let mut painted_any = false;
+        if apply_brush_mask(texture, &mask, src, src_alpha) {
+            self.is_dirty = true;
+        }
+    }
+
+    fn build_projected_brush_mask(
+        &self,
+        mesh: &MeshData,
+        center_pos: Vec3,
+        world_radius: f32,
+        tex_w: usize,
+        tex_h: usize,
+    ) -> Option<BrushMask> {
+        let mut mask = BrushMask::new(tex_w, tex_h);
+        let r2 = world_radius * world_radius;
 
         for tri in mesh.indices.chunks_exact(3) {
             let (Some(v0), Some(v1), Some(v2)) = (
@@ -96,18 +113,27 @@ impl PinturappUi {
                 continue;
             }
 
-            let t0 = Vec2::new(v0.uv[0] * (w.saturating_sub(1) as f32), v0.uv[1] * (h.saturating_sub(1) as f32));
-            let t1 = Vec2::new(v1.uv[0] * (w.saturating_sub(1) as f32), v1.uv[1] * (h.saturating_sub(1) as f32));
-            let t2 = Vec2::new(v2.uv[0] * (w.saturating_sub(1) as f32), v2.uv[1] * (h.saturating_sub(1) as f32));
+            let t0 = Vec2::new(
+                v0.uv[0] * (tex_w.saturating_sub(1) as f32),
+                v0.uv[1] * (tex_h.saturating_sub(1) as f32),
+            );
+            let t1 = Vec2::new(
+                v1.uv[0] * (tex_w.saturating_sub(1) as f32),
+                v1.uv[1] * (tex_h.saturating_sub(1) as f32),
+            );
+            let t2 = Vec2::new(
+                v2.uv[0] * (tex_w.saturating_sub(1) as f32),
+                v2.uv[1] * (tex_h.saturating_sub(1) as f32),
+            );
             let area = edge_fn_2d(t0, t1, t2);
             if area.abs() < 1e-6 {
                 continue;
             }
 
             let min_x = t0.x.min(t1.x).min(t2.x).floor().max(0.0) as i32;
-            let max_x = t0.x.max(t1.x).max(t2.x).ceil().min((w.saturating_sub(1)) as f32) as i32;
+            let max_x = t0.x.max(t1.x).max(t2.x).ceil().min((tex_w.saturating_sub(1)) as f32) as i32;
             let min_y = t0.y.min(t1.y).min(t2.y).floor().max(0.0) as i32;
-            let max_y = t0.y.max(t1.y).max(t2.y).ceil().min((h.saturating_sub(1)) as f32) as i32;
+            let max_y = t0.y.max(t1.y).max(t2.y).ceil().min((tex_h.saturating_sub(1)) as f32) as i32;
             if min_x > max_x || min_y > max_y {
                 continue;
             }
@@ -128,31 +154,22 @@ impl PinturappUi {
                         continue;
                     }
 
-                    let idx = y as usize * w + x as usize;
-                    if !touched_pixels.insert(idx) {
-                        continue;
-                    }
-
                     let dist = dist_sq.sqrt();
                     let falloff = (1.0 - dist / world_radius).clamp(0.0, 1.0);
-                    let alpha = src_alpha * falloff;
-                    if alpha <= 0.0 {
+                    if falloff <= 0.0 {
                         continue;
                     }
 
-                    let px = texture.get_pixel_mut(x as u32, y as u32);
-                    let dst = px.0;
-                    let out_r = src[0] as f32 * alpha + dst[0] as f32 * (1.0 - alpha);
-                    let out_g = src[1] as f32 * alpha + dst[1] as f32 * (1.0 - alpha);
-                    let out_b = src[2] as f32 * alpha + dst[2] as f32 * (1.0 - alpha);
-                    *px = image::Rgba([out_r as u8, out_g as u8, out_b as u8, 255]);
-                    painted_any = true;
+                    let idx = y as usize * tex_w + x as usize;
+                    mask.set_max(idx, falloff);
                 }
             }
         }
 
-        if painted_any {
-            self.is_dirty = true;
+        if mask.touched.is_empty() {
+            None
+        } else {
+            Some(mask)
         }
     }
 
@@ -191,6 +208,56 @@ impl PinturappUi {
 
 fn edge_fn_2d(a: Vec2, b: Vec2, p: Vec2) -> f32 {
     (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x)
+}
+
+struct BrushMask {
+    weights: Vec<f32>,
+    touched: Vec<usize>,
+}
+
+impl BrushMask {
+    fn new(width: usize, height: usize) -> Self {
+        Self {
+            weights: vec![0.0; width * height],
+            touched: Vec::new(),
+        }
+    }
+
+    fn set_max(&mut self, idx: usize, value: f32) {
+        if value <= 0.0 || idx >= self.weights.len() {
+            return;
+        }
+        if self.weights[idx] <= 0.0 {
+            self.touched.push(idx);
+        }
+        self.weights[idx] = self.weights[idx].max(value);
+    }
+}
+
+fn apply_brush_mask(texture: &mut RgbaImage, mask: &BrushMask, src: [u8; 4], src_alpha: f32) -> bool {
+    let width = texture.width().max(1) as usize;
+    let mut painted_any = false;
+    for idx in &mask.touched {
+        let falloff = mask.weights[*idx];
+        if falloff <= 0.0 {
+            continue;
+        }
+        let alpha = src_alpha * falloff;
+        if alpha <= 0.0 {
+            continue;
+        }
+
+        let x = (*idx % width) as u32;
+        let y = (*idx / width) as u32;
+        let px = texture.get_pixel_mut(x, y);
+        let dst = px.0;
+        let out_r = src[0] as f32 * alpha + dst[0] as f32 * (1.0 - alpha);
+        let out_g = src[1] as f32 * alpha + dst[1] as f32 * (1.0 - alpha);
+        let out_b = src[2] as f32 * alpha + dst[2] as f32 * (1.0 - alpha);
+        *px = image::Rgba([out_r as u8, out_g as u8, out_b as u8, 255]);
+        painted_any = true;
+    }
+    painted_any
 }
 
 fn point_triangle_distance_sq(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
