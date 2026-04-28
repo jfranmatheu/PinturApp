@@ -3,7 +3,7 @@ use crate::renderer::SurfaceHit;
 use glam::{Vec2, Vec3, vec3};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone)]
@@ -208,21 +208,30 @@ pub fn paint_projected_brush_into(
     let Some(world_radius) = hit_brush_radius(mesh, input.hit, w, h, dispatch.radius_px) else {
         return false;
     };
-    let candidate_triangles = if let Some(cache) = uv_coverage_cache.as_deref_mut() {
+    let mask = if let Some(cache) = uv_coverage_cache.as_deref_mut() {
         cache.ensure_for(mesh, w, h);
-        Some(cache.gather_candidate_triangles(input.center_uv, dispatch.radius_px).to_vec())
+        let candidates = cache.gather_candidate_triangles(input.center_uv, dispatch.radius_px);
+        build_projected_brush_mask(
+            mesh,
+            input.center_world,
+            world_radius,
+            dispatch.falloff,
+            w,
+            h,
+            Some(candidates),
+        )
     } else {
-        None
+        build_projected_brush_mask(
+            mesh,
+            input.center_world,
+            world_radius,
+            dispatch.falloff,
+            w,
+            h,
+            None,
+        )
     };
-    let Some(mask) = build_projected_brush_mask(
-        mesh,
-        input.center_world,
-        world_radius,
-        dispatch.falloff,
-        w,
-        h,
-        candidate_triangles.as_deref(),
-    ) else {
+    let Some(mask) = mask else {
         return false;
     };
 
@@ -463,10 +472,10 @@ pub fn apply_texture_padding(texture: &mut RgbaImage, mask: &BrushMask, coverage
     }
 
     let mut frontier = mask.touched.clone();
-    let mut seeded = vec![false; width * height];
+    let mut seeded = HashSet::with_capacity(frontier.len().saturating_mul(4).max(64));
     for idx in &frontier {
-        if *idx < seeded.len() {
-            seeded[*idx] = true;
+        if *idx < width * height {
+            seeded.insert(*idx);
         }
     }
 
@@ -474,8 +483,8 @@ pub fn apply_texture_padding(texture: &mut RgbaImage, mask: &BrushMask, coverage
         if frontier.is_empty() {
             break;
         }
-        let mut next_frontier = Vec::new();
-        let mut next_mark = vec![false; width * height];
+        let mut next_frontier = Vec::with_capacity(frontier.len().saturating_mul(2).max(32));
+        let mut next_mark = HashSet::with_capacity(frontier.len().saturating_mul(2).max(64));
 
         for idx in &frontier {
             if *idx >= width * height {
@@ -496,14 +505,13 @@ pub fn apply_texture_padding(texture: &mut RgbaImage, mask: &BrushMask, coverage
                     continue;
                 }
                 let nidx = ny as usize * width + nx as usize;
-                if coverage[nidx] || seeded[nidx] {
+                if coverage[nidx] || seeded.contains(&nidx) {
                     continue;
                 }
 
                 *texture.get_pixel_mut(nx as u32, ny as u32) = image::Rgba(src_color);
-                seeded[nidx] = true;
-                if !next_mark[nidx] {
-                    next_mark[nidx] = true;
+                seeded.insert(nidx);
+                if next_mark.insert(nidx) {
                     next_frontier.push(nidx);
                 }
             }
