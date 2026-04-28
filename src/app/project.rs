@@ -159,6 +159,7 @@ impl PinturappUi {
     }
 
     fn clear_session(&mut self) {
+        self.abort_paint_worker();
         self.loaded_mesh = None;
         self.last_loaded_path = None;
         self.loaded_texture_path = None;

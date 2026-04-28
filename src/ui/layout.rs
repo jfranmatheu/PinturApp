@@ -507,8 +507,7 @@ impl PinturappUi {
             && !secondary_activity
             && is_primary_down;
         if secondary_activity {
-            self.is_painting_stroke = false;
-            self.last_paint_sample_screen_pos = None;
+            self.end_paint_stroke();
         }
         let sampled_pressure = Self::current_brush_pressure(ui).map(Self::quantize_pressure);
         if self.use_tablet_pressure {
@@ -523,16 +522,15 @@ impl PinturappUi {
             self.begin_paint_stroke();
             self.is_painting_stroke = true;
         } else if !is_painting_now {
-            self.is_painting_stroke = false;
-            self.last_paint_sample_screen_pos = None;
+            self.end_paint_stroke();
         }
         self.display_brush_pressure = self.last_brush_pressure;
 
         if is_painting_now && self.is_painting_stroke {
             if let Some(pointer_pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
                 if !rect.contains(pointer_pos) {
-                    self.is_painting_stroke = false;
-                    self.last_paint_sample_screen_pos = None;
+                    self.end_paint_stroke();
+                    return;
                 }
                 let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
                 let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);

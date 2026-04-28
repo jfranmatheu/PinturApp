@@ -1,7 +1,10 @@
 use crate::PinturappUi;
 use crate::io::mesh_loader::MeshData;
-use crate::renderer::{BrushDispatch, BrushInput, paint_projected_brush_into};
+use crate::renderer::{BrushDispatch, BrushInput, UvCoverageCache, paint_projected_brush_into};
+use crate::{PaintWorkerCommand, PaintWorkerEvent};
 use image::RgbaImage;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 impl PinturappUi {
     pub(crate) fn clear_history(&mut self) {
@@ -17,6 +20,7 @@ impl PinturappUi {
 
     pub(crate) fn begin_paint_stroke(&mut self) {
         self.ensure_albedo_texture();
+        self.abort_paint_worker();
         self.last_paint_sample_screen_pos = None;
         if let Some(texture) = &self.albedo_texture {
             self.undo_stack.push_back(texture.clone());
@@ -28,7 +32,16 @@ impl PinturappUi {
         }
     }
 
+    pub(crate) fn end_paint_stroke(&mut self) {
+        self.is_painting_stroke = false;
+        self.last_paint_sample_screen_pos = None;
+        if let Some(tx) = &self.paint_worker_tx {
+            let _ = tx.send(PaintWorkerCommand::Finish);
+        }
+    }
+
     pub(crate) fn undo_paint(&mut self) {
+        self.abort_paint_worker();
         let Some(current) = self.albedo_texture.take() else {
             return;
         };
@@ -46,6 +59,7 @@ impl PinturappUi {
     }
 
     pub(crate) fn redo_paint(&mut self) {
+        self.abort_paint_worker();
         let Some(current) = self.albedo_texture.take() else {
             return;
         };
@@ -62,6 +76,137 @@ impl PinturappUi {
         self.viewport_needs_refresh = true;
     }
 
+    pub(crate) fn abort_paint_worker(&mut self) {
+        if let Some(tx) = &self.paint_worker_tx {
+            let _ = tx.send(PaintWorkerCommand::Abort);
+        }
+        self.paint_worker_tx = None;
+        self.paint_worker_rx = None;
+        if let Some(join) = self.paint_worker_join.take() {
+            let _ = join.join();
+        }
+    }
+
+    pub(crate) fn poll_paint_worker(&mut self) {
+        let mut finalized_texture = None;
+        if let Some(rx) = &self.paint_worker_rx {
+            while let Ok(event) = rx.try_recv() {
+                match event {
+                    PaintWorkerEvent::Preview(texture) => {
+                        self.albedo_texture = Some(texture);
+                        self.viewport_needs_refresh = true;
+                        self.is_dirty = true;
+                    }
+                    PaintWorkerEvent::Finished(texture) => {
+                        finalized_texture = Some(texture);
+                    }
+                }
+            }
+        }
+
+        if let Some(texture) = finalized_texture {
+            self.albedo_texture = Some(texture);
+            self.viewport_needs_refresh = true;
+            self.is_dirty = true;
+            self.paint_worker_tx = None;
+            self.paint_worker_rx = None;
+            if let Some(join) = self.paint_worker_join.take() {
+                let _ = join.join();
+            }
+        }
+    }
+
+    fn ensure_paint_worker(&mut self, mesh: &MeshData) -> bool {
+        if self.paint_worker_tx.is_some() {
+            return true;
+        }
+
+        let Some(texture) = self.albedo_texture.clone() else {
+            return false;
+        };
+        let mesh = mesh.clone();
+        let config = self.paint_pipeline_config.clone();
+        let (tx, rx) = mpsc::channel::<PaintWorkerCommand>();
+        let (event_tx, event_rx) = mpsc::channel::<PaintWorkerEvent>();
+        let join = std::thread::spawn(move || {
+            let mut texture = texture;
+            let mut coverage_cache = UvCoverageCache::default();
+            let mut painted_since_preview = false;
+            let mut last_preview = Instant::now();
+            let preview_interval = Duration::from_millis(24);
+
+            loop {
+                let command = match rx.recv() {
+                    Ok(command) => command,
+                    Err(_) => break,
+                };
+
+                let mut pending_finish = false;
+                match command {
+                    PaintWorkerCommand::Stamp { input, dispatch } => {
+                        if paint_projected_brush_into(
+                            &mut texture,
+                            &mesh,
+                            input,
+                            dispatch,
+                            Some(&mut coverage_cache),
+                            &config,
+                        ) {
+                            painted_since_preview = true;
+                        }
+                    }
+                    PaintWorkerCommand::Finish => pending_finish = true,
+                    PaintWorkerCommand::Abort => break,
+                }
+
+                while !pending_finish {
+                    let next = match rx.try_recv() {
+                        Ok(next) => next,
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            pending_finish = true;
+                            break;
+                        }
+                    };
+                    match next {
+                        PaintWorkerCommand::Stamp { input, dispatch } => {
+                            if paint_projected_brush_into(
+                                &mut texture,
+                                &mesh,
+                                input,
+                                dispatch,
+                                Some(&mut coverage_cache),
+                                &config,
+                            ) {
+                                painted_since_preview = true;
+                            }
+                        }
+                        PaintWorkerCommand::Finish => pending_finish = true,
+                        PaintWorkerCommand::Abort => return,
+                    }
+                }
+
+                if painted_since_preview && last_preview.elapsed() >= preview_interval {
+                    if event_tx.send(PaintWorkerEvent::Preview(texture.clone())).is_err() {
+                        return;
+                    }
+                    painted_since_preview = false;
+                    last_preview = Instant::now();
+                }
+
+                if pending_finish {
+                    let _ = event_tx.send(PaintWorkerEvent::Finished(texture));
+                    return;
+                }
+            }
+        });
+
+        self.paint_worker_tx = Some(tx);
+        self.paint_worker_rx = Some(event_rx);
+        self.paint_worker_join = Some(join);
+        true
+    }
+
     pub(crate) fn paint_projected_brush(
         &mut self,
         mesh: &MeshData,
@@ -69,6 +214,18 @@ impl PinturappUi {
         dispatch: BrushDispatch,
     ) {
         self.ensure_albedo_texture();
+        if !self.ensure_paint_worker(mesh) {
+            return;
+        }
+        if let Some(tx) = &self.paint_worker_tx {
+            if tx.send(PaintWorkerCommand::Stamp { input, dispatch }).is_ok() {
+                self.is_dirty = true;
+                return;
+            }
+        }
+
+        // Fallback path if worker is unavailable.
+        self.abort_paint_worker();
         let Some(texture) = self.albedo_texture.as_mut() else {
             return;
         };

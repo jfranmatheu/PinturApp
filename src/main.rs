@@ -2,6 +2,8 @@ use eframe::egui::{self, TextureHandle};
 use glam::Vec3;
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, Sender};
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 mod app;
@@ -13,7 +15,21 @@ mod ui;
 use app::PendingLoadAction;
 use image::RgbaImage;
 use io::mesh_loader::MeshData;
-use renderer::{BrushBlendMode, BrushFalloff, PaintPipelineConfig, ScreenPickBuffer, UvCoverageCache};
+use renderer::{
+    BrushBlendMode, BrushDispatch, BrushFalloff, BrushInput, PaintPipelineConfig, ScreenPickBuffer,
+    UvCoverageCache,
+};
+
+enum PaintWorkerCommand {
+    Stamp { input: BrushInput, dispatch: BrushDispatch },
+    Finish,
+    Abort,
+}
+
+enum PaintWorkerEvent {
+    Preview(RgbaImage),
+    Finished(RgbaImage),
+}
 
 struct PinturappUi {
     loaded_mesh: Option<MeshData>,
@@ -49,6 +65,9 @@ struct PinturappUi {
     redo_stack: VecDeque<RgbaImage>,
     is_painting_stroke: bool,
     last_paint_sample_screen_pos: Option<[f32; 2]>,
+    paint_worker_tx: Option<Sender<PaintWorkerCommand>>,
+    paint_worker_rx: Option<Receiver<PaintWorkerEvent>>,
+    paint_worker_join: Option<JoinHandle<()>>,
     current_project_path: Option<PathBuf>,
     recent_projects: Vec<PathBuf>,
     storage_dir: PathBuf,
@@ -69,6 +88,10 @@ impl eframe::App for PinturappUi {
         crate::platform::windows_pen::install(frame);
         #[cfg(target_os = "windows")]
         crate::platform::windows_wintab::install(frame);
+        self.poll_paint_worker();
+        if self.paint_worker_rx.is_some() {
+            ui.ctx().request_repaint();
+        }
         self.apply_modern_theme(ui.ctx());
         self.handle_shortcuts(ui.ctx());
         self.show_toolbar_panel(ui);

@@ -29,6 +29,7 @@ impl PinturappUi {
     }
 
     pub(crate) fn pick_and_load_obj(&mut self) {
+        self.abort_paint_worker();
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Wavefront OBJ", &["obj"])
             .pick_file()
@@ -59,6 +60,7 @@ impl PinturappUi {
     }
 
     pub(crate) fn pick_and_load_texture(&mut self) {
+        self.abort_paint_worker();
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Texture", &["png", "jpg", "jpeg", "bmp", "tga"])
             .pick_file()
