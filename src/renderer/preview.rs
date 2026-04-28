@@ -92,56 +92,13 @@ pub fn render_textured_preview(
     ColorImage::from_rgba_unmultiplied([width, height], &pixels)
 }
 
-pub fn pick_paint_uv_targets_at_screen(
-    mesh: &MeshData,
-    center: Vec3,
-    fit_scale: f32,
-    yaw: f32,
-    pitch: f32,
-    distance: f32,
-    size: [usize; 2],
-    screen: [f32; 2],
-    sample_radius_px: f32,
-) -> Vec<[f32; 2]> {
-    let mut targets = Vec::new();
-    let mut seen: HashSet<(i32, i32)> = HashSet::new();
-
-    let radius = sample_radius_px.max(1.0);
-    let step = (radius / 3.0).max(1.0);
-    let radius_sq = radius * radius;
-    let mut oy = -radius;
-    while oy <= radius + 0.001 {
-        let mut ox = -radius;
-        while ox <= radius + 0.001 {
-            if ox * ox + oy * oy <= radius_sq + 0.25 {
-                if let Some(uv) = pick_uv_at_screen(
-                    mesh,
-                    center,
-                    fit_scale,
-                    yaw,
-                    pitch,
-                    distance,
-                    size,
-                    [screen[0] + ox, screen[1] + oy],
-                ) {
-                    push_unique_uv(&mut targets, &mut seen, uv);
-                }
-            }
-            ox += step;
-        }
-        oy += step;
-    }
-
-    if targets.is_empty() {
-        if let Some(uv) = pick_uv_at_screen(mesh, center, fit_scale, yaw, pitch, distance, size, screen) {
-            push_unique_uv(&mut targets, &mut seen, uv);
-        }
-    }
-
-    targets
+#[derive(Debug, Clone, Copy)]
+pub struct SurfaceHit {
+    pub tri: [u32; 3],
+    pub bary: [f32; 3],
 }
 
-fn pick_uv_at_screen(
+pub fn pick_surface_hit_at_screen(
     mesh: &MeshData,
     center: Vec3,
     fit_scale: f32,
@@ -150,7 +107,20 @@ fn pick_uv_at_screen(
     distance: f32,
     size: [usize; 2],
     screen: [f32; 2],
-) -> Option<[f32; 2]> {
+) -> Option<SurfaceHit> {
+    pick_hit_at_screen(mesh, center, fit_scale, yaw, pitch, distance, size, screen)
+}
+
+fn pick_hit_at_screen(
+    mesh: &MeshData,
+    center: Vec3,
+    fit_scale: f32,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    size: [usize; 2],
+    screen: [f32; 2],
+) -> Option<SurfaceHit> {
     let width = size[0].max(1);
     let height = size[1].max(1);
 
@@ -168,7 +138,7 @@ fn pick_uv_at_screen(
     let mvp = proj * view * model;
 
     let mut best_z = f32::INFINITY;
-    let mut best_uv: Option<[f32; 2]> = None;
+    let mut best_hit: Option<SurfaceHit> = None;
 
     for tri in mesh.indices.chunks_exact(3) {
         let (Some(v0), Some(v1), Some(v2)) = (
@@ -205,23 +175,14 @@ fn pick_uv_at_screen(
         let z = w0 * p0.2 + w1 * p1.2 + w2 * p2.2;
         if z < best_z {
             best_z = z;
-            let u = w0 * v0.uv[0] + w1 * v1.uv[0] + w2 * v2.uv[0];
-            let v = w0 * v0.uv[1] + w1 * v1.uv[1] + w2 * v2.uv[1];
-            best_uv = Some([u, v]);
+            best_hit = Some(SurfaceHit {
+                tri: [tri[0], tri[1], tri[2]],
+                bary: [w0, w1, w2],
+            });
         }
     }
 
-    best_uv
-}
-
-fn push_unique_uv(targets: &mut Vec<[f32; 2]>, seen: &mut HashSet<(i32, i32)>, uv: [f32; 2]) {
-    let key = (
-        (uv[0] * 1_000_000.0).round() as i32,
-        (uv[1] * 1_000_000.0).round() as i32,
-    );
-    if seen.insert(key) {
-        targets.push(uv);
-    }
+    best_hit
 }
 
 pub fn draw_mesh_wireframe(

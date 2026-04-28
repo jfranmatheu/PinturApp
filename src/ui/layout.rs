@@ -1,5 +1,5 @@
 use crate::PinturappUi;
-use crate::renderer::{draw_mesh_wireframe, pick_paint_uv_targets_at_screen, render_textured_preview};
+use crate::renderer::{draw_mesh_wireframe, pick_surface_hit_at_screen, render_textured_preview};
 use eframe::egui;
 
 impl PinturappUi {
@@ -193,8 +193,7 @@ impl PinturappUi {
                 }
                 let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
                 let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);
-                let brush_screen_radius = self.estimate_brush_screen_radius(image_size);
-                let paint_targets = pick_paint_uv_targets_at_screen(
+                if let Some(hit) = pick_surface_hit_at_screen(
                     mesh,
                     self.mesh_center,
                     self.mesh_fit_scale,
@@ -203,26 +202,10 @@ impl PinturappUi {
                     self.orbit_distance,
                     image_size,
                     [sx, sy],
-                    brush_screen_radius,
-                );
-                for uv in paint_targets {
-                    self.paint_at_uv(uv);
+                ) {
+                    self.paint_projected_brush(mesh, hit);
                 }
             }
-        }
-    }
-
-    fn estimate_brush_screen_radius(&self, image_size: [usize; 2]) -> f32 {
-        let viewport_w = image_size[0].max(1) as f32;
-        let viewport_h = image_size[1].max(1) as f32;
-        if let Some(tex) = &self.albedo_texture {
-            let tex_w = tex.width().max(1) as f32;
-            let tex_h = tex.height().max(1) as f32;
-            let sx = viewport_w / tex_w;
-            let sy = viewport_h / tex_h;
-            (self.brush_radius_px * sx.min(sy)).clamp(1.5, 64.0)
-        } else {
-            (self.brush_radius_px * 0.2).clamp(1.5, 32.0)
         }
     }
 
