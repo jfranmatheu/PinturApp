@@ -80,26 +80,49 @@ pub struct BrushInput {
     pub center_uv: [f32; 2],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrushBlendMode {
+    Normal,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BrushDispatch {
+    pub screen_pos: [f32; 2],
+    pub radius_px: f32,
+    pub color: [u8; 4],
+    pub pressure: f32,
+    pub blend_mode: BrushBlendMode,
+}
+
+impl BrushDispatch {
+    pub fn resolved_color(self) -> [u8; 4] {
+        let alpha = (self.color[3] as f32 * self.pressure.clamp(0.0, 1.0)).round() as u8;
+        [self.color[0], self.color[1], self.color[2], alpha]
+    }
+}
+
 pub fn paint_projected_brush_into(
     texture: &mut RgbaImage,
     mesh: &MeshData,
     input: BrushInput,
-    brush_radius_px: f32,
-    brush_color: [u8; 4],
+    dispatch: BrushDispatch,
     uv_coverage_cache: Option<&mut UvCoverageCache>,
     config: &PaintPipelineConfig,
 ) -> bool {
     let _ = input.hit.bary;
     let _ = input.center_uv;
+    let _ = dispatch.screen_pos;
+    let _ = dispatch.blend_mode;
     let w = texture.width().max(1) as usize;
     let h = texture.height().max(1) as usize;
-    let Some(world_radius) = hit_brush_radius(mesh, input.hit, w, h, brush_radius_px) else {
+    let Some(world_radius) = hit_brush_radius(mesh, input.hit, w, h, dispatch.radius_px) else {
         return false;
     };
     let Some(mask) = build_projected_brush_mask(mesh, input.center_world, world_radius, w, h) else {
         return false;
     };
 
+    let brush_color = dispatch.resolved_color();
     let src_alpha = brush_color[3] as f32 / 255.0;
     let painted = apply_brush_mask(texture, &mask, brush_color, src_alpha);
     if painted {

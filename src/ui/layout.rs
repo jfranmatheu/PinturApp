@@ -1,5 +1,8 @@
 use crate::PinturappUi;
-use crate::renderer::{BrushInput, draw_mesh_wireframe, render_preview_frame, sample_surface_from_buffer};
+use crate::renderer::{
+    BrushBlendMode, BrushDispatch, BrushInput, draw_mesh_wireframe, render_preview_frame,
+    sample_surface_from_buffer,
+};
 use eframe::egui;
 
 impl PinturappUi {
@@ -214,6 +217,13 @@ impl PinturappUi {
                             hit: sample.hit,
                             center_world: glam::vec3(sample.world_pos[0], sample.world_pos[1], sample.world_pos[2]),
                             center_uv: sample.uv,
+                        },
+                        BrushDispatch {
+                            screen_pos: [sx, sy],
+                            radius_px: self.brush_radius_px,
+                            color: self.brush_color.to_array(),
+                            pressure: 1.0,
+                            blend_mode: BrushBlendMode::Normal,
                         },
                     );
                     ui.ctx().request_repaint();
