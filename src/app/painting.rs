@@ -83,6 +83,7 @@ impl PinturappUi {
         let src = self.brush_color.to_array();
         let src_alpha = src[3] as f32 / 255.0;
         if apply_brush_mask(texture, &mask, src, src_alpha) {
+            apply_texture_padding(texture, mesh, &mask, 2);
             self.is_dirty = true;
         }
     }
@@ -258,6 +259,118 @@ fn apply_brush_mask(texture: &mut RgbaImage, mask: &BrushMask, src: [u8; 4], src
         painted_any = true;
     }
     painted_any
+}
+
+fn apply_texture_padding(texture: &mut RgbaImage, mesh: &MeshData, mask: &BrushMask, iterations: usize) {
+    if iterations == 0 || mask.touched.is_empty() {
+        return;
+    }
+
+    let width = texture.width().max(1) as usize;
+    let height = texture.height().max(1) as usize;
+    let coverage = build_uv_coverage_map(mesh, width, height);
+
+    let mut frontier = mask.touched.clone();
+    let mut seeded = vec![false; width * height];
+    for idx in &frontier {
+        if *idx < seeded.len() {
+            seeded[*idx] = true;
+        }
+    }
+
+    for _ in 0..iterations {
+        if frontier.is_empty() {
+            break;
+        }
+        let snapshot = texture.clone();
+        let mut next_frontier = Vec::new();
+        let mut next_mark = vec![false; width * height];
+
+        for idx in &frontier {
+            if *idx >= width * height {
+                continue;
+            }
+            let x = idx % width;
+            let y = idx / width;
+            let src_color = snapshot.get_pixel(x as u32, y as u32).0;
+            let neighbors = [
+                (x as i32 - 1, y as i32),
+                (x as i32 + 1, y as i32),
+                (x as i32, y as i32 - 1),
+                (x as i32, y as i32 + 1),
+            ];
+
+            for (nx, ny) in neighbors {
+                if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                    continue;
+                }
+                let nidx = ny as usize * width + nx as usize;
+                if coverage[nidx] || seeded[nidx] {
+                    continue;
+                }
+
+                *texture.get_pixel_mut(nx as u32, ny as u32) = image::Rgba(src_color);
+                seeded[nidx] = true;
+                if !next_mark[nidx] {
+                    next_mark[nidx] = true;
+                    next_frontier.push(nidx);
+                }
+            }
+        }
+
+        frontier = next_frontier;
+    }
+}
+
+fn build_uv_coverage_map(mesh: &MeshData, width: usize, height: usize) -> Vec<bool> {
+    let mut covered = vec![false; width * height];
+    for tri in mesh.indices.chunks_exact(3) {
+        let (Some(v0), Some(v1), Some(v2)) = (
+            mesh.vertices.get(tri[0] as usize),
+            mesh.vertices.get(tri[1] as usize),
+            mesh.vertices.get(tri[2] as usize),
+        ) else {
+            continue;
+        };
+        let t0 = Vec2::new(
+            v0.uv[0] * (width.saturating_sub(1) as f32),
+            v0.uv[1] * (height.saturating_sub(1) as f32),
+        );
+        let t1 = Vec2::new(
+            v1.uv[0] * (width.saturating_sub(1) as f32),
+            v1.uv[1] * (height.saturating_sub(1) as f32),
+        );
+        let t2 = Vec2::new(
+            v2.uv[0] * (width.saturating_sub(1) as f32),
+            v2.uv[1] * (height.saturating_sub(1) as f32),
+        );
+        let area = edge_fn_2d(t0, t1, t2);
+        if area.abs() < 1e-6 {
+            continue;
+        }
+
+        let min_x = t0.x.min(t1.x).min(t2.x).floor().max(0.0) as i32;
+        let max_x = t0.x.max(t1.x).max(t2.x).ceil().min((width.saturating_sub(1)) as f32) as i32;
+        let min_y = t0.y.min(t1.y).min(t2.y).floor().max(0.0) as i32;
+        let max_y = t0.y.max(t1.y).max(t2.y).ceil().min((height.saturating_sub(1)) as f32) as i32;
+        if min_x > max_x || min_y > max_y {
+            continue;
+        }
+
+        for y in min_y..=max_y {
+            for x in min_x..=max_x {
+                let p = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                let w0 = edge_fn_2d(t1, t2, p) / area;
+                let w1 = edge_fn_2d(t2, t0, p) / area;
+                let w2 = edge_fn_2d(t0, t1, p) / area;
+                if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
+                    let idx = y as usize * width + x as usize;
+                    covered[idx] = true;
+                }
+            }
+        }
+    }
+    covered
 }
 
 fn point_triangle_distance_sq(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
