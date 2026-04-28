@@ -432,10 +432,14 @@ impl PinturappUi {
             .inner_margin(egui::Margin::same(10))
     }
 
-    fn welcome_surface() -> egui::Frame {
+    fn welcome_surface(opacity: f32) -> egui::Frame {
+        let alpha = (255.0 * opacity.clamp(0.0, 1.0)).round() as u8;
         egui::Frame::default()
-            .fill(egui::Color32::from_rgb(20, 25, 35))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(58, 74, 98)))
+            .fill(egui::Color32::from_rgba_unmultiplied(20, 25, 35, alpha))
+            .stroke(egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(58, 74, 98, alpha),
+            ))
             .corner_radius(egui::CornerRadius::same(12))
             .inner_margin(egui::Margin::same(14))
     }
@@ -509,7 +513,14 @@ impl PinturappUi {
             (screen_rect.width() * 0.62).clamp(460.0, 920.0),
             (screen_rect.height() * 0.72).clamp(340.0, 760.0),
         );
-        let panel_rect = egui::Rect::from_center_size(screen_rect.center(), panel_size);
+        let fade_t = ctx.animate_bool(egui::Id::new("welcome_overlay_fade"), true);
+        if fade_t < 1.0 {
+            ctx.request_repaint();
+        }
+        let panel_rect = egui::Rect::from_center_size(
+            screen_rect.center(),
+            panel_size * (0.98 + fade_t * 0.02),
+        );
         let mut dismiss_overlay = false;
 
         egui::Area::new("welcome_overlay".into())
@@ -520,11 +531,14 @@ impl PinturappUi {
                 ui.set_min_size(screen_rect.size());
                 let full_rect = ui.max_rect();
                 let backdrop = ui.allocate_rect(full_rect, egui::Sense::click());
-                ui.painter()
-                    .rect_filled(full_rect, 0.0, egui::Color32::from_black_alpha(170));
+                ui.painter().rect_filled(
+                    full_rect,
+                    0.0,
+                    egui::Color32::from_black_alpha((170.0 * fade_t).round() as u8),
+                );
 
                 ui.scope_builder(egui::UiBuilder::new().max_rect(panel_rect), |ui| {
-                    Self::welcome_surface().show(ui, |ui| {
+                    Self::welcome_surface(fade_t).show(ui, |ui| {
                         ui.heading("Pinturapp");
                         ui.label("Start a new project or continue from recent work.");
                         ui.add_space(10.0);
@@ -588,12 +602,18 @@ impl PinturappUi {
                                         cols[1].id().with(path),
                                         egui::Sense::click(),
                                     );
+                                    let hover_t = ctx.animate_bool(response.id, response.hovered());
 
-                                    if response.hovered() {
+                                    if hover_t > 0.0 {
                                         cols[1].painter().rect_filled(
                                             row_rect,
                                             4.0,
-                                            egui::Color32::from_rgba_unmultiplied(84, 112, 146, 48),
+                                            egui::Color32::from_rgba_unmultiplied(
+                                                84,
+                                                112,
+                                                146,
+                                                (48.0 * hover_t).round() as u8,
+                                            ),
                                         );
                                     }
                                     cols[1].painter().text(
@@ -601,11 +621,11 @@ impl PinturappUi {
                                         egui::Align2::LEFT_CENTER,
                                         label,
                                         egui::FontId::proportional(14.0),
-                                        if response.hovered() {
-                                            egui::Color32::from_rgb(236, 244, 252)
-                                        } else {
-                                            egui::Color32::from_rgb(205, 216, 230)
-                                        },
+                                        egui::Color32::from_rgb(
+                                            egui::lerp(205.0..=236.0, hover_t).round() as u8,
+                                            egui::lerp(216.0..=244.0, hover_t).round() as u8,
+                                            egui::lerp(230.0..=252.0, hover_t).round() as u8,
+                                        ),
                                     );
                                     if row_idx + 1 < recent.len().min(10) {
                                         let y = row_rect.bottom() - 0.5;
