@@ -11,4 +11,4 @@ pub use preview::{
     ScreenPickBuffer, SurfaceHit, compute_mesh_fit, draw_mesh_wireframe, render_preview_frame,
     sample_surface_from_buffer,
 };
-pub use viewport_wgpu::enqueue_gpu_viewport;
+pub use viewport_wgpu::{HdriMap, enqueue_gpu_viewport, load_hdri_map};

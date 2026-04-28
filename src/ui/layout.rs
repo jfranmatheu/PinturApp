@@ -1,6 +1,7 @@
 use crate::PinturappUi;
 use crate::renderer::{
     BrushBlendMode, BrushDispatch, BrushFalloff, BrushInput, draw_mesh_wireframe, enqueue_gpu_viewport,
+    load_hdri_map,
     render_preview_frame,
     sample_surface_from_buffer,
 };
@@ -80,6 +81,33 @@ impl PinturappUi {
                 .size(10.5)
                 .color(egui::Color32::from_rgb(198, 206, 222)),
         );
+    }
+
+    fn current_hdri_label(&self) -> String {
+        self.hdri_options
+            .get(self.selected_hdri_index)
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("None")
+            .to_owned()
+    }
+
+    fn set_hdri_selection(&mut self, index: usize) {
+        if index >= self.hdri_options.len() {
+            return;
+        }
+        self.selected_hdri_index = index;
+        match load_hdri_map(&self.hdri_options[index]) {
+            Ok(map) => {
+                self.hdri_map = Some(map);
+                self.last_error = None;
+                self.viewport_needs_refresh = true;
+                self.is_dirty = true;
+            }
+            Err(err) => {
+                self.last_error = Some(err);
+            }
+        }
     }
 
     fn pressure_toggle_button(ui: &mut egui::Ui, enabled: &mut bool, label: &str) -> bool {
@@ -218,10 +246,29 @@ impl PinturappUi {
                 ui.small("[WHEEL] Zoom");
                 ui.separator();
                 ui.menu_button("[D] Display", |ui| {
-                    ui.label(if self.show_lighting { "Shading: Lit" } else { "Shading: Flat" });
-                    if ui.checkbox(&mut self.show_lighting, "Lighting").changed() {
+                    ui.label(if self.show_lighting { "Shading: HDRI" } else { "Shading: Flat" });
+                    if ui.checkbox(&mut self.show_lighting, "HDRI Lighting").changed() {
                         self.viewport_needs_refresh = true;
                     }
+                    let mut changed_hdri = None;
+                    egui::ComboBox::from_label("HDRI")
+                        .selected_text(self.current_hdri_label())
+                        .show_ui(ui, |ui| {
+                            for (idx, path) in self.hdri_options.iter().enumerate() {
+                                let label = path
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("Unnamed");
+                                if ui.selectable_label(idx == self.selected_hdri_index, label).clicked() {
+                                    changed_hdri = Some(idx);
+                                }
+                            }
+                        });
+                    if let Some(idx) = changed_hdri {
+                        self.set_hdri_selection(idx);
+                    }
+                    ui.small("Rotate: Ctrl+Shift+MouseMove");
+                    ui.small(format!("Rotation: {:.1} deg", self.hdri_rotation.to_degrees()));
                     if ui
                         .checkbox(&mut self.show_wireframe_overlay, "Wireframe Overlay")
                         .changed()
@@ -480,6 +527,17 @@ impl PinturappUi {
     }
 
     fn handle_camera_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
+        let hdri_drag = ui.ctx().input(|i| {
+            response.hovered() && i.modifiers.ctrl && i.modifiers.shift && i.pointer.primary_down()
+        });
+        if hdri_drag {
+            let delta = ui.ctx().input(|i| i.pointer.delta());
+            self.hdri_rotation += delta.x * 0.01;
+            self.is_dirty = true;
+            self.viewport_needs_refresh = true;
+            return;
+        }
+
         let secondary_down = ui.ctx().input(|i| i.pointer.secondary_down());
         if response.hovered() && secondary_down {
             let delta = ui.ctx().input(|i| i.pointer.delta());
@@ -645,7 +703,8 @@ impl PinturappUi {
     ) {
         let can_draw_gpu_viewport = self.paint_pipeline_config.use_gpu_compute_experimental
             && self.gpu_albedo_snapshot.is_some()
-            && self.wgpu_target_format.is_some();
+            && self.wgpu_target_format.is_some()
+            && self.hdri_map.is_some();
         if can_draw_gpu_viewport {
             let should_refresh_pick = self.preview_pick_buffer.is_none()
                 || self.viewport_frame_size != image_size
@@ -665,8 +724,8 @@ impl PinturappUi {
                 self.viewport_frame_size = image_size;
                 self.viewport_needs_refresh = false;
             }
-            if let (Some(snapshot), Some(target_format)) =
-                (self.gpu_albedo_snapshot.as_ref(), self.wgpu_target_format)
+            if let (Some(snapshot), Some(target_format), Some(hdri_map)) =
+                (self.gpu_albedo_snapshot.as_ref(), self.wgpu_target_format, self.hdri_map.as_ref())
             {
                 if enqueue_gpu_viewport(
                     painter,
@@ -680,6 +739,8 @@ impl PinturappUi {
                     snapshot,
                     target_format,
                     self.show_lighting,
+                    self.hdri_rotation,
+                    hdri_map,
                 ) {
                     ui.ctx().request_repaint();
                 }

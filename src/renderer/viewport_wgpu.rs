@@ -4,33 +4,42 @@ use bytemuck::{Pod, Zeroable};
 use eframe::egui;
 use eframe::wgpu;
 use glam::{Mat4, Vec3, vec3};
+use image::io::Reader as ImageReader;
+use std::path::Path;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 const SCENE_WGSL: &str = r#"
 struct Camera {
     mvp: mat4x4<f32>,
+    camera_pos: vec3<f32>,
+    _pad0: f32,
 };
 
 struct AlbedoParams {
     tex_size: vec2<f32>,
     lighting_enabled: f32,
-    _pad: f32,
+    hdri_rotation: f32,
 };
 
 struct VSIn {
     @location(0) pos: vec3<f32>,
     @location(1) uv: vec2<f32>,
+    @location(2) normal: vec3<f32>,
 };
 
 struct VSOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) world_pos: vec3<f32>,
+    @location(2) normal: vec3<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<storage, read> pixels: array<u32>;
 @group(0) @binding(2) var<uniform> albedo: AlbedoParams;
+@group(0) @binding(3) var hdri_tex: texture_2d<f32>;
+@group(0) @binding(4) var hdri_sampler: sampler;
 
 fn unpack_rgba8(v: u32) -> vec4<f32> {
     let r: f32 = f32(v & 0xffu) / 255.0;
@@ -46,7 +55,23 @@ fn vs_main(v: VSIn) -> VSOut {
     out.pos = camera.mvp * vec4<f32>(v.pos, 1.0);
     out.uv = v.uv;
     out.world_pos = v.pos;
+    out.normal = v.normal;
     return out;
+}
+
+fn rotate_y(dir: vec3<f32>, angle: f32) -> vec3<f32> {
+    let c = cos(angle);
+    let s = sin(angle);
+    return vec3<f32>(c * dir.x - s * dir.z, dir.y, s * dir.x + c * dir.z);
+}
+
+fn env_color(dir_in: vec3<f32>, angle: f32) -> vec3<f32> {
+    let dir = normalize(rotate_y(dir_in, angle));
+    let PI = 3.14159265359;
+    let theta = atan2(dir.z, dir.x);
+    let phi = acos(clamp(dir.y, -1.0, 1.0));
+    let uv = vec2<f32>(theta / (2.0 * PI) + 0.5, phi / PI);
+    return textureSampleLevel(hdri_tex, hdri_sampler, uv, 0.0).rgb;
 }
 
 @fragment
@@ -62,14 +87,16 @@ fn fs_main(in_f: VSOut, @builtin(front_facing) front_facing: bool) -> @location(
     if albedo.lighting_enabled < 0.5 {
         return base;
     }
-    var n = normalize(cross(dpdx(in_f.world_pos), dpdy(in_f.world_pos)));
+    var n = normalize(in_f.normal);
     if !front_facing {
         n = -n;
     }
-    let light_dir = normalize(vec3<f32>(0.55, 0.75, 0.35));
-    let lambert = max(dot(n, light_dir), 0.0);
-    let shade = 0.22 + 0.78 * lambert;
-    return vec4<f32>(base.rgb * shade, base.a);
+    let view_dir = normalize(camera.camera_pos - in_f.world_pos);
+    let diffuse = env_color(n, albedo.hdri_rotation);
+    let refl = reflect(-view_dir, n);
+    let specular = env_color(refl, albedo.hdri_rotation);
+    let lit = base.rgb * (0.12 + 0.88 * diffuse) + specular * 0.16;
+    return vec4<f32>(lit, base.a);
 }
 "#;
 
@@ -107,12 +134,15 @@ fn fs_main(in_f: VSOut) -> @location(0) vec4<f32> {
 struct GpuVertex {
     pos: [f32; 3],
     uv: [f32; 2],
+    normal: [f32; 3],
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct CameraUniform {
     mvp: [[f32; 4]; 4],
+    camera_pos: [f32; 3],
+    _pad0: f32,
 }
 
 #[repr(C)]
@@ -120,14 +150,22 @@ struct CameraUniform {
 struct AlbedoParams {
     tex_size: [f32; 2],
     lighting_enabled: f32,
-    _pad: f32,
+    hdri_rotation: f32,
 }
 
 struct Prepared {
     _scene_color_texture: wgpu::Texture,
     _scene_depth_texture: wgpu::Texture,
+    _hdri_texture: wgpu::Texture,
     composite_pipeline: wgpu::RenderPipeline,
     composite_bind_group: wgpu::BindGroup,
+}
+
+#[derive(Clone)]
+pub struct HdriMap {
+    pub width: u32,
+    pub height: u32,
+    pub rgba8: Arc<Vec<u8>>,
 }
 
 struct ViewportCallback {
@@ -137,6 +175,8 @@ struct ViewportCallback {
     camera: CameraUniform,
     target_format: wgpu::TextureFormat,
     lighting_enabled: bool,
+    hdri_rotation: f32,
+    hdri_map: HdriMap,
     viewport_points: [f32; 2],
     prepared: Mutex<Option<Prepared>>,
 }
@@ -168,7 +208,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -196,6 +236,22 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let scene_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -213,7 +269,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 buffers: &[wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<GpuVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x3],
                 }],
             },
             primitive: wgpu::PrimitiveState {
@@ -250,12 +306,56 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         let albedo_params = AlbedoParams {
             tex_size: [self.snapshot.width as f32, self.snapshot.height as f32],
             lighting_enabled: if self.lighting_enabled { 1.0 } else { 0.0 },
-            _pad: 0.0,
+            hdri_rotation: self.hdri_rotation,
         };
         let albedo_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pinturapp-viewport-albedo-params-buffer"),
             contents: bytemuck::bytes_of(&albedo_params),
             usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let hdri_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("pinturapp-viewport-hdri"),
+            size: wgpu::Extent3d {
+                width: self.hdri_map.width.max(1),
+                height: self.hdri_map.height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let hdri_view = hdri_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        _queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &hdri_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            self.hdri_map.rgba8.as_slice(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(self.hdri_map.width.max(1) * 4),
+                rows_per_image: Some(self.hdri_map.height.max(1)),
+            },
+            wgpu::Extent3d {
+                width: self.hdri_map.width.max(1),
+                height: self.hdri_map.height.max(1),
+                depth_or_array_layers: 1,
+            },
+        );
+        let hdri_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("pinturapp-viewport-hdri-sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
         });
         let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pinturapp-viewport-scene-bind-group"),
@@ -272,6 +372,14 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: albedo_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&hdri_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&hdri_sampler),
                 },
             ],
         });
@@ -440,6 +548,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
             *prepared = Some(Prepared {
                 _scene_color_texture: scene_color_texture,
                 _scene_depth_texture: scene_depth_texture,
+                _hdri_texture: hdri_texture,
                 composite_pipeline,
                 composite_bind_group,
             });
@@ -465,7 +574,14 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
     }
 }
 
-fn viewport_mvp(center: Vec3, fit_scale: f32, yaw: f32, pitch: f32, distance: f32, aspect: f32) -> Mat4 {
+fn viewport_camera(
+    center: Vec3,
+    fit_scale: f32,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    aspect: f32,
+) -> (Mat4, Vec3) {
     let target = vec3(0.0, 0.0, 0.0);
     let eye = target
         + vec3(
@@ -476,7 +592,7 @@ fn viewport_mvp(center: Vec3, fit_scale: f32, yaw: f32, pitch: f32, distance: f3
     let model = Mat4::from_scale(Vec3::splat(fit_scale)) * Mat4::from_translation(-center);
     let view = Mat4::look_at_rh(eye, target, Vec3::Y);
     let proj = Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect.max(0.01), 0.01, 200.0);
-    proj * view * model
+    (proj * view * model, eye)
 }
 
 pub fn enqueue_gpu_viewport(
@@ -491,6 +607,8 @@ pub fn enqueue_gpu_viewport(
     snapshot: &GpuAlbedoSnapshot,
     target_format: wgpu::TextureFormat,
     lighting_enabled: bool,
+    hdri_rotation: f32,
+    hdri_map: &HdriMap,
 ) -> bool {
     if mesh.indices.is_empty() || mesh.vertices.is_empty() {
         return false;
@@ -501,21 +619,52 @@ pub fn enqueue_gpu_viewport(
         .map(|v| GpuVertex {
             pos: v.position,
             uv: v.uv,
+            normal: v.normal,
         })
         .collect::<Vec<_>>();
     let indices = mesh.indices.clone();
     let aspect = (rect.width() / rect.height().max(1.0)).max(0.01);
-    let mvp = viewport_mvp(center, fit_scale, yaw, pitch, distance, aspect).to_cols_array_2d();
+    let (mvp, eye) = viewport_camera(center, fit_scale, yaw, pitch, distance, aspect);
     let callback = ViewportCallback {
         vertices,
         indices,
         snapshot: snapshot.clone(),
-        camera: CameraUniform { mvp },
+        camera: CameraUniform {
+            mvp: mvp.to_cols_array_2d(),
+            camera_pos: eye.to_array(),
+            _pad0: 0.0,
+        },
         target_format,
         lighting_enabled,
+        hdri_rotation,
+        hdri_map: hdri_map.clone(),
         viewport_points: [rect.width(), rect.height()],
         prepared: Mutex::new(None),
     };
     painter.add(egui_wgpu::Callback::new_paint_callback(rect, callback));
     true
+}
+
+pub fn load_hdri_map(path: &Path) -> Result<HdriMap, String> {
+    let reader = ImageReader::open(path)
+        .map_err(|err| format!("Failed to open HDRI '{}': {err}", path.display()))?;
+    let decoded = reader
+        .decode()
+        .map_err(|err| format!("Failed to decode HDRI '{}': {err}", path.display()))?;
+    let rgb32 = decoded.to_rgb32f();
+    let mut rgba8 = Vec::with_capacity((rgb32.width() as usize) * (rgb32.height() as usize) * 4);
+    for px in rgb32.pixels() {
+        let r = (px[0].max(0.0) / (1.0 + px[0].max(0.0))).powf(1.0 / 2.2);
+        let g = (px[1].max(0.0) / (1.0 + px[1].max(0.0))).powf(1.0 / 2.2);
+        let b = (px[2].max(0.0) / (1.0 + px[2].max(0.0))).powf(1.0 / 2.2);
+        rgba8.push((r * 255.0).clamp(0.0, 255.0) as u8);
+        rgba8.push((g * 255.0).clamp(0.0, 255.0) as u8);
+        rgba8.push((b * 255.0).clamp(0.0, 255.0) as u8);
+        rgba8.push(255);
+    }
+    Ok(HdriMap {
+        width: rgb32.width().max(1),
+        height: rgb32.height().max(1),
+        rgba8: Arc::new(rgba8),
+    })
 }
