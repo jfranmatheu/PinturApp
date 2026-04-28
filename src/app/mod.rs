@@ -1,3 +1,4 @@
+mod painting;
 mod project;
 pub mod state;
 
