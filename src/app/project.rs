@@ -42,6 +42,7 @@ impl PinturappUi {
         self.last_loaded_path = None;
         self.loaded_texture_path = None;
         self.albedo_texture = None;
+        self.uv_coverage_cache = None;
 
         if let Some(mesh_entry) = state.mesh_entry {
             let path = base_dir.join(mesh_entry);
@@ -146,6 +147,7 @@ impl PinturappUi {
         self.last_loaded_path = None;
         self.loaded_texture_path = None;
         self.albedo_texture = None;
+        self.uv_coverage_cache = None;
         self.preview_texture = None;
         self.orbit_yaw = 0.5;
         self.orbit_pitch = 0.25;

@@ -2,6 +2,8 @@ use crate::io::mesh_loader::MeshData;
 use crate::renderer::SurfaceHit;
 use glam::{Vec2, Vec3, vec3};
 use image::RgbaImage;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone)]
 pub struct PaintPipelineConfig {
@@ -11,6 +13,35 @@ pub struct PaintPipelineConfig {
 impl Default for PaintPipelineConfig {
     fn default() -> Self {
         Self { padding_iterations: 2 }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UvCoverageCache {
+    width: usize,
+    height: usize,
+    mesh_signature: u64,
+    covered: Vec<bool>,
+}
+
+impl UvCoverageCache {
+    fn ensure_for(&mut self, mesh: &MeshData, width: usize, height: usize) {
+        let signature = mesh_signature(mesh);
+        if self.width == width
+            && self.height == height
+            && self.mesh_signature == signature
+            && self.covered.len() == width * height
+        {
+            return;
+        }
+        self.covered = build_uv_coverage_map(mesh, width, height);
+        self.width = width;
+        self.height = height;
+        self.mesh_signature = signature;
+    }
+
+    fn coverage(&self) -> &[bool] {
+        &self.covered
     }
 }
 
@@ -48,6 +79,7 @@ pub fn paint_projected_brush_into(
     hit: SurfaceHit,
     brush_radius_px: f32,
     brush_color: [u8; 4],
+    uv_coverage_cache: Option<&mut UvCoverageCache>,
     config: &PaintPipelineConfig,
 ) -> bool {
     let w = texture.width().max(1) as usize;
@@ -62,7 +94,13 @@ pub fn paint_projected_brush_into(
     let src_alpha = brush_color[3] as f32 / 255.0;
     let painted = apply_brush_mask(texture, &mask, brush_color, src_alpha);
     if painted {
-        apply_texture_padding(texture, mesh, &mask, config.padding_iterations);
+        if let Some(cache) = uv_coverage_cache {
+            cache.ensure_for(mesh, w, h);
+            apply_texture_padding(texture, &mask, cache.coverage(), config.padding_iterations);
+        } else {
+            let coverage = build_uv_coverage_map(mesh, w, h);
+            apply_texture_padding(texture, &mask, &coverage, config.padding_iterations);
+        }
     }
     painted
 }
@@ -225,14 +263,16 @@ pub fn apply_brush_mask(texture: &mut RgbaImage, mask: &BrushMask, src: [u8; 4],
     painted_any
 }
 
-pub fn apply_texture_padding(texture: &mut RgbaImage, mesh: &MeshData, mask: &BrushMask, iterations: usize) {
+pub fn apply_texture_padding(texture: &mut RgbaImage, mask: &BrushMask, coverage: &[bool], iterations: usize) {
     if iterations == 0 || mask.is_empty() {
         return;
     }
 
     let width = texture.width().max(1) as usize;
     let height = texture.height().max(1) as usize;
-    let coverage = build_uv_coverage_map(mesh, width, height);
+    if coverage.len() != width * height {
+        return;
+    }
 
     let mut frontier = mask.touched.clone();
     let mut seeded = vec![false; width * height];
@@ -349,6 +389,30 @@ fn build_uv_coverage_map(mesh: &MeshData, width: usize, height: usize) -> Vec<bo
 
 fn edge_fn_2d(a: Vec2, b: Vec2, p: Vec2) -> f32 {
     (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x)
+}
+
+fn mesh_signature(mesh: &MeshData) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    mesh.source_path.hash(&mut hasher);
+    mesh.vertices.len().hash(&mut hasher);
+    mesh.indices.len().hash(&mut hasher);
+    if let Some(v) = mesh.vertices.first() {
+        v.uv[0].to_bits().hash(&mut hasher);
+        v.uv[1].to_bits().hash(&mut hasher);
+        v.position[0].to_bits().hash(&mut hasher);
+    }
+    if let Some(v) = mesh.vertices.last() {
+        v.uv[0].to_bits().hash(&mut hasher);
+        v.uv[1].to_bits().hash(&mut hasher);
+        v.position[2].to_bits().hash(&mut hasher);
+    }
+    if let Some(i) = mesh.indices.first() {
+        i.hash(&mut hasher);
+    }
+    if let Some(i) = mesh.indices.last() {
+        i.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn point_triangle_distance_sq(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {

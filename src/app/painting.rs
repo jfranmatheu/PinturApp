@@ -70,6 +70,7 @@ impl PinturappUi {
             hit,
             self.brush_radius_px,
             self.brush_color.to_array(),
+            Some(self.uv_coverage_cache.get_or_insert_with(Default::default)),
             &self.paint_pipeline_config,
         ) {
             self.is_dirty = true;
