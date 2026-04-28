@@ -1,4 +1,5 @@
 mod assets;
+mod bootstrap;
 mod painting;
 mod project;
 pub mod state;
