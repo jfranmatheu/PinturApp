@@ -27,7 +27,6 @@ enum PaintWorkerCommand {
 }
 
 enum PaintWorkerEvent {
-    Preview(RgbaImage),
     Finished(RgbaImage),
 }
 
