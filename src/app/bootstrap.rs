@@ -25,6 +25,7 @@ impl Default for PinturappUi {
             mesh_fit_scale: 1.0,
             albedo_texture: None,
             preview_texture: None,
+            preview_pick_buffer: None,
             brush_radius_px: 12.0,
             brush_color: egui::Color32::from_rgba_unmultiplied(255, 90, 90, 255),
             undo_stack: VecDeque::new(),

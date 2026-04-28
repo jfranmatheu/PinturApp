@@ -1,5 +1,5 @@
 use crate::PinturappUi;
-use crate::renderer::{draw_mesh_wireframe, pick_surface_hit_at_screen, render_textured_preview};
+use crate::renderer::{draw_mesh_wireframe, pick_surface_hit_from_buffer, render_preview_frame};
 use eframe::egui;
 
 impl PinturappUi {
@@ -83,10 +83,11 @@ impl PinturappUi {
                 self.handle_camera_input(ui, &response);
                 let img_w = rect.width().max(1.0).round() as usize;
                 let img_h = rect.height().max(1.0).round() as usize;
-                self.handle_paint_input(ui, &response, rect, &mesh, [img_w, img_h]);
                 self.draw_viewport_texture_and_wireframe(ui, &painter, rect, &mesh, [img_w, img_h]);
+                self.handle_paint_input(ui, &response, rect, &mesh);
             } else {
                 self.is_painting_stroke = false;
+                self.preview_pick_buffer = None;
                 ui.label("No mesh loaded yet. Use 'Load OBJ' to import a model with UVs.");
             }
             self.show_viewport_footer(ui);
@@ -173,7 +174,6 @@ impl PinturappUi {
         response: &egui::Response,
         rect: egui::Rect,
         mesh: &crate::io::mesh_loader::MeshData,
-        image_size: [usize; 2],
     ) {
         let is_painting_now = response.hovered()
             && ui
@@ -193,17 +193,11 @@ impl PinturappUi {
                 }
                 let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
                 let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);
-                if let Some(hit) = pick_surface_hit_at_screen(
-                    mesh,
-                    self.mesh_center,
-                    self.mesh_fit_scale,
-                    self.orbit_yaw,
-                    self.orbit_pitch,
-                    self.orbit_distance,
-                    image_size,
-                    [sx, sy],
-                ) {
+                if let Some(pick) = &self.preview_pick_buffer
+                    && let Some(hit) = pick_surface_hit_from_buffer(mesh, pick, [sx, sy])
+                {
                     self.paint_projected_brush(mesh, hit);
+                    ui.ctx().request_repaint();
                 }
             }
         }
@@ -217,7 +211,7 @@ impl PinturappUi {
         mesh: &crate::io::mesh_loader::MeshData,
         image_size: [usize; 2],
     ) {
-        let image = render_textured_preview(
+        let frame = render_preview_frame(
             mesh,
             self.mesh_center,
             self.mesh_fit_scale,
@@ -227,7 +221,8 @@ impl PinturappUi {
             image_size,
             self.albedo_texture.as_ref(),
         );
-        self.update_preview_texture(ui.ctx(), image);
+        self.preview_pick_buffer = Some(frame.pick);
+        self.update_preview_texture(ui.ctx(), frame.image);
         if let Some(texture) = &self.preview_texture {
             painter.image(
                 texture.id(),

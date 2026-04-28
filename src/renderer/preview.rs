@@ -21,7 +21,38 @@ pub fn compute_mesh_fit(mesh: &MeshData) -> (Vec3, f32) {
     (center, fit_scale)
 }
 
-pub fn render_textured_preview(
+#[derive(Debug, Clone, Copy)]
+pub struct SurfaceHit {
+    pub tri: [u32; 3],
+    pub bary: [f32; 3],
+}
+
+#[derive(Debug, Clone)]
+pub struct ScreenPickBuffer {
+    pub size: [usize; 2],
+    tri_ids: Vec<u32>,
+    bary: Vec<[f32; 3]>,
+}
+
+impl ScreenPickBuffer {
+    pub fn empty(size: [usize; 2]) -> Self {
+        let width = size[0].max(1);
+        let height = size[1].max(1);
+        let len = width * height;
+        Self {
+            size: [width, height],
+            tri_ids: vec![u32::MAX; len],
+            bary: vec![[0.0, 0.0, 0.0]; len],
+        }
+    }
+}
+
+pub struct PreviewFrame {
+    pub image: ColorImage,
+    pub pick: ScreenPickBuffer,
+}
+
+pub fn render_preview_frame(
     mesh: &MeshData,
     center: Vec3,
     fit_scale: f32,
@@ -30,11 +61,12 @@ pub fn render_textured_preview(
     distance: f32,
     size: [usize; 2],
     albedo: Option<&RgbaImage>,
-) -> ColorImage {
+) -> PreviewFrame {
     let width = size[0].max(1);
     let height = size[1].max(1);
     let mut pixels = vec![0_u8; width * height * 4];
     let mut depth = vec![f32::INFINITY; width * height];
+    let mut pick = ScreenPickBuffer::empty([width, height]);
 
     for i in 0..(width * height) {
         let p = i * 4;
@@ -51,96 +83,13 @@ pub fn render_textured_preview(
             distance * pitch.sin(),
             distance * yaw.sin() * pitch.cos(),
         );
-
     let model = Mat4::from_scale(Vec3::splat(fit_scale)) * Mat4::from_translation(-center);
     let view = Mat4::look_at_rh(eye, target, Vec3::Y);
     let aspect = (width as f32 / height as f32).max(0.01);
     let proj = Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect, 0.01, 200.0);
     let mvp = proj * view * model;
 
-    for tri in mesh.indices.chunks_exact(3) {
-        let i0 = tri[0] as usize;
-        let i1 = tri[1] as usize;
-        let i2 = tri[2] as usize;
-        let (Some(v0), Some(v1), Some(v2)) = (
-            mesh.vertices.get(i0),
-            mesh.vertices.get(i1),
-            mesh.vertices.get(i2),
-        ) else {
-            continue;
-        };
-
-        let Some(p0) = project_vertex(mvp, v0.position, width, height) else {
-            continue;
-        };
-        let Some(p1) = project_vertex(mvp, v1.position, width, height) else {
-            continue;
-        };
-        let Some(p2) = project_vertex(mvp, v2.position, width, height) else {
-            continue;
-        };
-
-        rasterize_triangle(
-            &mut pixels,
-            &mut depth,
-            [width, height],
-            [(p0.0, p0.1, p0.2, v0.uv), (p1.0, p1.1, p1.2, v1.uv), (p2.0, p2.1, p2.2, v2.uv)],
-            albedo,
-        );
-    }
-
-    ColorImage::from_rgba_unmultiplied([width, height], &pixels)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SurfaceHit {
-    pub tri: [u32; 3],
-    pub bary: [f32; 3],
-}
-
-pub fn pick_surface_hit_at_screen(
-    mesh: &MeshData,
-    center: Vec3,
-    fit_scale: f32,
-    yaw: f32,
-    pitch: f32,
-    distance: f32,
-    size: [usize; 2],
-    screen: [f32; 2],
-) -> Option<SurfaceHit> {
-    pick_hit_at_screen(mesh, center, fit_scale, yaw, pitch, distance, size, screen)
-}
-
-fn pick_hit_at_screen(
-    mesh: &MeshData,
-    center: Vec3,
-    fit_scale: f32,
-    yaw: f32,
-    pitch: f32,
-    distance: f32,
-    size: [usize; 2],
-    screen: [f32; 2],
-) -> Option<SurfaceHit> {
-    let width = size[0].max(1);
-    let height = size[1].max(1);
-
-    let target = vec3(0.0, 0.0, 0.0);
-    let eye = target
-        + vec3(
-            distance * yaw.cos() * pitch.cos(),
-            distance * pitch.sin(),
-            distance * yaw.sin() * pitch.cos(),
-        );
-    let model = Mat4::from_scale(Vec3::splat(fit_scale)) * Mat4::from_translation(-center);
-    let view = Mat4::look_at_rh(eye, target, Vec3::Y);
-    let aspect = (width as f32 / height as f32).max(0.01);
-    let proj = Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect, 0.01, 200.0);
-    let mvp = proj * view * model;
-
-    let mut best_z = f32::INFINITY;
-    let mut best_hit: Option<SurfaceHit> = None;
-
-    for tri in mesh.indices.chunks_exact(3) {
+    for (tri_id, tri) in mesh.indices.chunks_exact(3).enumerate() {
         let (Some(v0), Some(v1), Some(v2)) = (
             mesh.vertices.get(tri[0] as usize),
             mesh.vertices.get(tri[1] as usize),
@@ -158,31 +107,51 @@ fn pick_hit_at_screen(
             continue;
         };
 
-        let area = edge_fn(p0.0, p0.1, p1.0, p1.1, p2.0, p2.1);
-        if area.abs() < 1e-6 {
+        if tri_id > u32::MAX as usize {
             continue;
         }
-
-        let px = screen[0] + 0.5;
-        let py = screen[1] + 0.5;
-        let w0 = edge_fn(p1.0, p1.1, p2.0, p2.1, px, py) / area;
-        let w1 = edge_fn(p2.0, p2.1, p0.0, p0.1, px, py) / area;
-        let w2 = edge_fn(p0.0, p0.1, p1.0, p1.1, px, py) / area;
-        if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
-            continue;
-        }
-
-        let z = w0 * p0.2 + w1 * p1.2 + w2 * p2.2;
-        if z < best_z {
-            best_z = z;
-            best_hit = Some(SurfaceHit {
-                tri: [tri[0], tri[1], tri[2]],
-                bary: [w0, w1, w2],
-            });
-        }
+        rasterize_triangle(
+            &mut pixels,
+            &mut depth,
+            &mut pick,
+            tri_id as u32,
+            [width, height],
+            [(p0.0, p0.1, p0.2, v0.uv), (p1.0, p1.1, p1.2, v1.uv), (p2.0, p2.1, p2.2, v2.uv)],
+            albedo,
+        );
     }
 
-    best_hit
+    PreviewFrame {
+        image: ColorImage::from_rgba_unmultiplied([width, height], &pixels),
+        pick,
+    }
+}
+
+pub fn pick_surface_hit_from_buffer(
+    mesh: &MeshData,
+    pick: &ScreenPickBuffer,
+    screen: [f32; 2],
+) -> Option<SurfaceHit> {
+    let width = pick.size[0];
+    let height = pick.size[1];
+    let x = screen[0].round() as i32;
+    let y = screen[1].round() as i32;
+    if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
+        return None;
+    }
+    let idx = y as usize * width + x as usize;
+    let tri_id = *pick.tri_ids.get(idx)?;
+    if tri_id == u32::MAX {
+        return None;
+    }
+    let i = tri_id as usize * 3;
+    if i + 2 >= mesh.indices.len() {
+        return None;
+    }
+    Some(SurfaceHit {
+        tri: [mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]],
+        bary: pick.bary[idx],
+    })
 }
 
 pub fn draw_mesh_wireframe(
@@ -258,6 +227,8 @@ fn project_vertex(mvp: Mat4, pos: [f32; 3], width: usize, height: usize) -> Opti
 fn rasterize_triangle(
     pixels: &mut [u8],
     depth: &mut [f32],
+    pick: &mut ScreenPickBuffer,
+    tri_id: u32,
     size: [usize; 2],
     tri: [(f32, f32, f32, [f32; 2]); 3],
     albedo: Option<&RgbaImage>,
@@ -296,6 +267,8 @@ fn rasterize_triangle(
                 continue;
             }
             depth[idx] = z;
+            pick.tri_ids[idx] = tri_id;
+            pick.bary[idx] = [w0, w1, w2];
 
             let u = w0 * uv0[0] + w1 * uv1[0] + w2 * uv2[0];
             let v = w0 * uv0[1] + w1 * uv1[1] + w2 * uv2[1];
