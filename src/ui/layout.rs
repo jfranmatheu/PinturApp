@@ -72,7 +72,7 @@ impl PinturappUi {
                 } else {
                     "fixed"
                 };
-                ui.label(format!("Pressure: {:.2} ({pressure_mode})", self.last_brush_pressure));
+                ui.label(format!("Pressure: {:.2} ({pressure_mode})", self.display_brush_pressure));
             });
         });
     }
@@ -261,6 +261,7 @@ impl PinturappUi {
         } else {
             1.0
         };
+        self.display_brush_pressure += (self.last_brush_pressure - self.display_brush_pressure) * 0.25;
         if is_painting_now && !self.is_painting_stroke {
             self.begin_paint_stroke();
             self.is_painting_stroke = true;
