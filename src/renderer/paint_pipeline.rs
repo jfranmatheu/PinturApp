@@ -348,7 +348,6 @@ pub fn apply_texture_padding(texture: &mut RgbaImage, mask: &BrushMask, coverage
         if frontier.is_empty() {
             break;
         }
-        let snapshot = texture.clone();
         let mut next_frontier = Vec::new();
         let mut next_mark = vec![false; width * height];
 
@@ -358,7 +357,7 @@ pub fn apply_texture_padding(texture: &mut RgbaImage, mask: &BrushMask, coverage
             }
             let x = idx % width;
             let y = idx / width;
-            let src_color = snapshot.get_pixel(x as u32, y as u32).0;
+            let src_color = texture.get_pixel(x as u32, y as u32).0;
             let neighbors = [
                 (x as i32 - 1, y as i32),
                 (x as i32 + 1, y as i32),

@@ -169,6 +169,7 @@ impl PinturappUi {
         self.mesh_center = Vec3::ZERO;
         self.mesh_fit_scale = 1.0;
         self.paint_pipeline_config = Default::default();
+        self.show_wireframe_overlay = false;
         self.brush_size_px = 24.0;
         self.brush_strength = 1.0;
         self.brush_color = egui::Color32::from_rgba_unmultiplied(255, 90, 90, 255);

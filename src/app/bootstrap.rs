@@ -29,6 +29,7 @@ impl Default for PinturappUi {
             preview_pick_buffer: None,
             viewport_frame_size: [0, 0],
             viewport_needs_refresh: true,
+            show_wireframe_overlay: false,
             paint_pipeline_config: Default::default(),
             uv_coverage_cache: None,
             brush_size_px: 24.0,

@@ -190,6 +190,16 @@ impl PinturappUi {
                 ui.small("[LMB] Paint");
                 ui.small("[RMB] Orbit");
                 ui.small("[WHEEL] Zoom");
+                ui.separator();
+                ui.menu_button("[D] Display", |ui| {
+                    ui.label("Shading: Solid");
+                    if ui
+                        .checkbox(&mut self.show_wireframe_overlay, "Wireframe Overlay")
+                        .changed()
+                    {
+                        self.is_dirty = true;
+                    }
+                });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.small(format!("U:{}  R:{}", self.undo_stack.len(), self.redo_stack.len()));
                     if ui.button("Redo").clicked() {
@@ -543,16 +553,18 @@ impl PinturappUi {
             );
         }
 
-        draw_mesh_wireframe(
-            painter,
-            rect,
-            mesh,
-            self.mesh_center,
-            self.mesh_fit_scale,
-            self.orbit_yaw,
-            self.orbit_pitch,
-            self.orbit_distance,
-        );
+        if self.show_wireframe_overlay {
+            draw_mesh_wireframe(
+                painter,
+                rect,
+                mesh,
+                self.mesh_center,
+                self.mesh_fit_scale,
+                self.orbit_yaw,
+                self.orbit_pitch,
+                self.orbit_distance,
+            );
+        }
     }
 
     fn show_viewport_footer(&self, ui: &mut egui::Ui) {
