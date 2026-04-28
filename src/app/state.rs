@@ -17,6 +17,8 @@ pub struct ProjectState {
     pub brush_blend_mode: BrushBlendMode,
     #[serde(default = "default_use_tablet_pressure")]
     pub use_tablet_pressure: bool,
+    #[serde(default = "default_pressure_smoothing")]
+    pub pressure_smoothing: f32,
     #[serde(default = "default_seam_padding_iterations")]
     pub seam_padding_iterations: usize,
 }
@@ -31,6 +33,10 @@ fn default_brush_blend_mode() -> BrushBlendMode {
 
 fn default_use_tablet_pressure() -> bool {
     true
+}
+
+fn default_pressure_smoothing() -> f32 {
+    0.25
 }
 
 #[derive(Debug, Clone)]

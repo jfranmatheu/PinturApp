@@ -212,6 +212,15 @@ impl PinturappUi {
                 {
                     self.is_dirty = true;
                 }
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.pressure_smoothing, 0.0..=1.0)
+                            .text("Pressure Smoothing"),
+                    )
+                    .changed()
+                {
+                    self.is_dirty = true;
+                }
                 ui.small("Higher values pad farther into UV gutter to reduce seam filtering artifacts.");
             });
             ui.small(format!("Undo: {}", self.undo_stack.len()));
@@ -261,7 +270,8 @@ impl PinturappUi {
         } else {
             1.0
         };
-        self.display_brush_pressure += (self.last_brush_pressure - self.display_brush_pressure) * 0.25;
+        self.display_brush_pressure +=
+            (self.last_brush_pressure - self.display_brush_pressure) * self.pressure_smoothing.clamp(0.0, 1.0);
         if is_painting_now && !self.is_painting_stroke {
             self.begin_paint_stroke();
             self.is_painting_stroke = true;

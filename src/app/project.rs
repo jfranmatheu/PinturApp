@@ -23,6 +23,7 @@ impl PinturappUi {
             brush_color_rgba: self.brush_color.to_array(),
             brush_blend_mode: self.brush_blend_mode,
             use_tablet_pressure: self.use_tablet_pressure,
+            pressure_smoothing: self.pressure_smoothing,
             seam_padding_iterations: self.paint_pipeline_config.padding_iterations,
         }
     }
@@ -40,6 +41,7 @@ impl PinturappUi {
         );
         self.brush_blend_mode = state.brush_blend_mode;
         self.use_tablet_pressure = state.use_tablet_pressure;
+        self.pressure_smoothing = state.pressure_smoothing.clamp(0.0, 1.0);
         self.paint_pipeline_config.padding_iterations = state.seam_padding_iterations.clamp(0, 8);
 
         self.loaded_mesh = None;
@@ -161,6 +163,7 @@ impl PinturappUi {
         self.paint_pipeline_config = Default::default();
         self.brush_blend_mode = Default::default();
         self.use_tablet_pressure = true;
+        self.pressure_smoothing = 0.25;
         self.last_brush_pressure = 1.0;
         self.display_brush_pressure = 1.0;
         self.is_painting_stroke = false;
