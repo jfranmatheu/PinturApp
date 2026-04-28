@@ -2595,6 +2595,7 @@ dependencies = [
  "bytemuck",
  "eframe",
  "egui",
+ "egui-wgpu",
  "env_logger",
  "glam",
  "image 0.24.9",

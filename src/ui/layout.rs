@@ -1,6 +1,7 @@
 use crate::PinturappUi;
 use crate::renderer::{
-    BrushBlendMode, BrushDispatch, BrushFalloff, BrushInput, draw_mesh_wireframe, render_preview_frame,
+    BrushBlendMode, BrushDispatch, BrushFalloff, BrushInput, draw_mesh_wireframe, enqueue_gpu_viewport,
+    render_preview_frame,
     sample_surface_from_buffer,
 };
 use eframe::egui;
@@ -639,6 +640,47 @@ impl PinturappUi {
         mesh: &crate::io::mesh_loader::MeshData,
         image_size: [usize; 2],
     ) {
+        let can_draw_gpu_viewport = self.paint_pipeline_config.use_gpu_compute_experimental
+            && self.gpu_albedo_snapshot.is_some()
+            && self.wgpu_target_format.is_some();
+        if can_draw_gpu_viewport {
+            let should_refresh_pick = self.preview_pick_buffer.is_none()
+                || self.viewport_frame_size != image_size
+                || self.viewport_needs_refresh;
+            if should_refresh_pick {
+                let frame = render_preview_frame(
+                    mesh,
+                    self.mesh_center,
+                    self.mesh_fit_scale,
+                    self.orbit_yaw,
+                    self.orbit_pitch,
+                    self.orbit_distance,
+                    image_size,
+                    None,
+                );
+                self.preview_pick_buffer = Some(frame.pick);
+                self.viewport_frame_size = image_size;
+                self.viewport_needs_refresh = false;
+            }
+            if let (Some(snapshot), Some(target_format)) =
+                (self.gpu_albedo_snapshot.as_ref(), self.wgpu_target_format)
+            {
+                if enqueue_gpu_viewport(
+                    painter,
+                    rect,
+                    mesh,
+                    self.mesh_center,
+                    self.mesh_fit_scale,
+                    self.orbit_yaw,
+                    self.orbit_pitch,
+                    self.orbit_distance,
+                    snapshot,
+                    target_format,
+                ) {
+                    ui.ctx().request_repaint();
+                }
+            }
+        } else {
         let should_render = self.preview_texture.is_none()
             || self.preview_pick_buffer.is_none()
             || self.viewport_frame_size != image_size
@@ -666,6 +708,7 @@ impl PinturappUi {
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
+        }
         }
 
         if self.show_wireframe_overlay {

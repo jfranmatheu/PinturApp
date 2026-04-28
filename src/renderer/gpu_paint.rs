@@ -38,6 +38,13 @@ struct GpuRuntime {
     queue: Arc<wgpu::Queue>,
 }
 
+#[derive(Clone)]
+pub struct GpuAlbedoSnapshot {
+    pub width: u32,
+    pub height: u32,
+    pub pixels_buffer: wgpu::Buffer,
+}
+
 static GPU_RUNTIME: OnceLock<Option<GpuRuntime>> = OnceLock::new();
 static SHARED_GPU_RUNTIME: OnceLock<GpuRuntime> = OnceLock::new();
 
@@ -245,6 +252,14 @@ pub struct GpuPaintSession {
 }
 
 impl GpuPaintSession {
+    pub fn snapshot(&self) -> GpuAlbedoSnapshot {
+        GpuAlbedoSnapshot {
+            width: self.width as u32,
+            height: self.height as u32,
+            pixels_buffer: self.pixels_buffer.clone(),
+        }
+    }
+
     pub fn new(texture: &RgbaImage, uv_cache: &mut UvCoverageCache, mesh: &MeshData) -> Option<Self> {
         let runtime = gpu_runtime()?;
         let device = runtime.device.clone();

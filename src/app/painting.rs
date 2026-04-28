@@ -94,6 +94,12 @@ impl PinturappUi {
                 match event {
                     PaintWorkerEvent::Preview(texture) => {
                         self.albedo_texture = Some(texture);
+                        self.gpu_albedo_snapshot = None;
+                        self.viewport_needs_refresh = true;
+                        self.is_dirty = true;
+                    }
+                    PaintWorkerEvent::PreviewGpu(snapshot) => {
+                        self.gpu_albedo_snapshot = Some(snapshot);
                         self.viewport_needs_refresh = true;
                         self.is_dirty = true;
                     }
@@ -202,6 +208,13 @@ impl PinturappUi {
                     pending_stamps.clear();
                     if !used_gpu_batch {
                         painted_since_preview |= batch_painted;
+                    } else if batch_painted && last_preview.elapsed() >= preview_interval {
+                        if let Some(session) = gpu_session.as_ref() {
+                            if event_tx.send(PaintWorkerEvent::PreviewGpu(session.snapshot())).is_err() {
+                                return;
+                            }
+                            last_preview = Instant::now();
+                        }
                     }
                 }
 

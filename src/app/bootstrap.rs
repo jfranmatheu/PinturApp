@@ -28,6 +28,7 @@ impl Default for PinturappUi {
             albedo_texture: None,
             preview_texture: None,
             preview_pick_buffer: None,
+            gpu_albedo_snapshot: None,
             viewport_frame_size: [0, 0],
             viewport_needs_refresh: true,
             show_wireframe_overlay: false,
@@ -64,6 +65,7 @@ impl Default for PinturappUi {
             show_autosave_recovery_prompt,
             show_welcome_overlay: true,
             theme_applied: false,
+            wgpu_target_format: None,
         }
     }
 }

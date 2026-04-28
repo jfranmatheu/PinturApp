@@ -28,6 +28,7 @@ enum PaintWorkerCommand {
 
 enum PaintWorkerEvent {
     Preview(RgbaImage),
+    PreviewGpu(crate::renderer::gpu_paint::GpuAlbedoSnapshot),
     Finished(RgbaImage),
 }
 
@@ -44,6 +45,7 @@ struct PinturappUi {
     albedo_texture: Option<RgbaImage>,
     preview_texture: Option<TextureHandle>,
     preview_pick_buffer: Option<ScreenPickBuffer>,
+    gpu_albedo_snapshot: Option<crate::renderer::gpu_paint::GpuAlbedoSnapshot>,
     viewport_frame_size: [usize; 2],
     viewport_needs_refresh: bool,
     show_wireframe_overlay: bool,
@@ -80,10 +82,12 @@ struct PinturappUi {
     show_autosave_recovery_prompt: bool,
     show_welcome_overlay: bool,
     theme_applied: bool,
+    wgpu_target_format: Option<eframe::wgpu::TextureFormat>,
 }
 
 impl eframe::App for PinturappUi {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.wgpu_target_format = frame.wgpu_render_state().map(|s| s.target_format);
         #[cfg(target_os = "windows")]
         crate::platform::windows_pen::install(frame);
         #[cfg(target_os = "windows")]
