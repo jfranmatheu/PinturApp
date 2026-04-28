@@ -4,10 +4,8 @@ use bytemuck::{Pod, Zeroable};
 use eframe::egui;
 use eframe::wgpu;
 use glam::{Mat4, Vec3, vec3};
-use half::f16;
 use image::io::Reader as ImageReader;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::Mutex;
 
 const SCENE_WGSL: &str = r#"
@@ -21,6 +19,7 @@ struct AlbedoParams {
     tex_size: vec2<f32>,
     lighting_enabled: f32,
     hdri_rotation: f32,
+    sh_coeffs: array<vec4<f32>, 9>,
 };
 
 struct VSIn {
@@ -39,8 +38,6 @@ struct VSOut {
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<storage, read> pixels: array<u32>;
 @group(0) @binding(2) var<uniform> albedo: AlbedoParams;
-@group(0) @binding(3) var hdri_tex: texture_2d<f32>;
-@group(0) @binding(4) var hdri_sampler: sampler;
 
 fn unpack_rgba8(v: u32) -> vec4<f32> {
     let r: f32 = f32(v & 0xffu) / 255.0;
@@ -66,56 +63,38 @@ fn rotate_y(dir: vec3<f32>, angle: f32) -> vec3<f32> {
     return vec3<f32>(c * dir.x - s * dir.z, dir.y, s * dir.x + c * dir.z);
 }
 
-fn env_color(dir_in: vec3<f32>, angle: f32) -> vec3<f32> {
-    let dir = normalize(rotate_y(dir_in, angle));
-    let PI = 3.14159265359;
-    let theta = atan2(dir.z, dir.x);
-    let phi = acos(clamp(dir.y, -1.0, 1.0));
-    let uv = vec2<f32>(theta / (2.0 * PI) + 0.5, phi / PI);
-    return textureSampleLevel(hdri_tex, hdri_sampler, uv, 0.0).rgb;
+fn sh_basis(dir: vec3<f32>) -> array<f32, 9> {
+    let x = dir.x;
+    let y = dir.y;
+    let z = dir.z;
+    return array<f32, 9>(
+        0.282095,
+        0.488603 * y,
+        0.488603 * z,
+        0.488603 * x,
+        1.092548 * x * y,
+        1.092548 * y * z,
+        0.315392 * (3.0 * z * z - 1.0),
+        1.092548 * x * z,
+        0.546274 * (x * x - y * y),
+    );
 }
 
 fn env_irradiance(n_in: vec3<f32>, angle: f32) -> vec3<f32> {
-    let n = normalize(n_in);
-    var up = vec3<f32>(0.0, 1.0, 0.0);
-    if abs(n.y) > 0.999 {
-        up = vec3<f32>(1.0, 0.0, 0.0);
-    }
-    let t = normalize(cross(up, n));
-    let b = normalize(cross(n, t));
-
-    let d0 = n;
-    let d1 = normalize(n + 0.65 * t);
-    let d2 = normalize(n - 0.65 * t);
-    let d3 = normalize(n + 0.65 * b);
-    let d4 = normalize(n - 0.65 * b);
-    let d5 = normalize(n + 0.45 * t + 0.45 * b);
-    let d6 = normalize(n - 0.45 * t + 0.45 * b);
-    let d7 = normalize(n + 0.45 * t - 0.45 * b);
-    let d8 = normalize(n - 0.45 * t - 0.45 * b);
-
-    let w0 = 0.24;
-    let w1 = 0.12;
-    let w2 = 0.12;
-    let w3 = 0.12;
-    let w4 = 0.12;
-    let w5 = 0.07;
-    let w6 = 0.07;
-    let w7 = 0.07;
-    let w8 = 0.07;
-
-    let c0 = env_color(d0, angle) * max(dot(n, d0), 0.0) * w0;
-    let c1 = env_color(d1, angle) * max(dot(n, d1), 0.0) * w1;
-    let c2 = env_color(d2, angle) * max(dot(n, d2), 0.0) * w2;
-    let c3 = env_color(d3, angle) * max(dot(n, d3), 0.0) * w3;
-    let c4 = env_color(d4, angle) * max(dot(n, d4), 0.0) * w4;
-    let c5 = env_color(d5, angle) * max(dot(n, d5), 0.0) * w5;
-    let c6 = env_color(d6, angle) * max(dot(n, d6), 0.0) * w6;
-    let c7 = env_color(d7, angle) * max(dot(n, d7), 0.0) * w7;
-    let c8 = env_color(d8, angle) * max(dot(n, d8), 0.0) * w8;
-
-    let sum_w = w0 + w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8;
-    return (c0 + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8) / max(sum_w, 1e-5);
+    let PI = 3.14159265359;
+    let n = normalize(rotate_y(n_in, angle));
+    let b = sh_basis(n);
+    var c = vec3<f32>(0.0);
+    c = c + albedo.sh_coeffs[0].rgb * (b[0] * PI);
+    c = c + albedo.sh_coeffs[1].rgb * (b[1] * (2.0 * PI / 3.0));
+    c = c + albedo.sh_coeffs[2].rgb * (b[2] * (2.0 * PI / 3.0));
+    c = c + albedo.sh_coeffs[3].rgb * (b[3] * (2.0 * PI / 3.0));
+    c = c + albedo.sh_coeffs[4].rgb * (b[4] * (PI / 4.0));
+    c = c + albedo.sh_coeffs[5].rgb * (b[5] * (PI / 4.0));
+    c = c + albedo.sh_coeffs[6].rgb * (b[6] * (PI / 4.0));
+    c = c + albedo.sh_coeffs[7].rgb * (b[7] * (PI / 4.0));
+    c = c + albedo.sh_coeffs[8].rgb * (b[8] * (PI / 4.0));
+    return max(c, vec3<f32>(0.0));
 }
 
 @fragment
@@ -136,7 +115,7 @@ fn fs_main(in_f: VSOut, @builtin(front_facing) front_facing: bool) -> @location(
         n = -n;
     }
     let irradiance = env_irradiance(n, albedo.hdri_rotation);
-    let lit_linear = base.rgb * (vec3<f32>(0.03) + irradiance * 1.15);
+    let lit_linear = base.rgb * (vec3<f32>(0.03) + irradiance);
     let mapped = lit_linear / (vec3<f32>(1.0) + lit_linear);
     return vec4<f32>(mapped, base.a);
 }
@@ -193,21 +172,19 @@ struct AlbedoParams {
     tex_size: [f32; 2],
     lighting_enabled: f32,
     hdri_rotation: f32,
+    sh_coeffs: [[f32; 4]; 9],
 }
 
 struct Prepared {
     _scene_color_texture: wgpu::Texture,
     _scene_depth_texture: wgpu::Texture,
-    _hdri_texture: wgpu::Texture,
     composite_pipeline: wgpu::RenderPipeline,
     composite_bind_group: wgpu::BindGroup,
 }
 
 #[derive(Clone)]
 pub struct HdriMap {
-    pub width: u32,
-    pub height: u32,
-    pub rgba16f: Arc<Vec<u16>>,
+    pub sh_coeffs: [[f32; 4]; 9],
 }
 
 struct ViewportCallback {
@@ -278,22 +255,6 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
             ],
         });
         let scene_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -349,55 +310,12 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
             tex_size: [self.snapshot.width as f32, self.snapshot.height as f32],
             lighting_enabled: if self.lighting_enabled { 1.0 } else { 0.0 },
             hdri_rotation: self.hdri_rotation,
+            sh_coeffs: self.hdri_map.sh_coeffs,
         };
         let albedo_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pinturapp-viewport-albedo-params-buffer"),
             contents: bytemuck::bytes_of(&albedo_params),
             usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let hdri_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("pinturapp-viewport-hdri"),
-            size: wgpu::Extent3d {
-                width: self.hdri_map.width.max(1),
-                height: self.hdri_map.height.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let hdri_view = hdri_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        _queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &hdri_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            bytemuck::cast_slice(self.hdri_map.rgba16f.as_slice()),
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(self.hdri_map.width.max(1) * 8),
-                rows_per_image: Some(self.hdri_map.height.max(1)),
-            },
-            wgpu::Extent3d {
-                width: self.hdri_map.width.max(1),
-                height: self.hdri_map.height.max(1),
-                depth_or_array_layers: 1,
-            },
-        );
-        let hdri_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("pinturapp-viewport-hdri-sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-            ..Default::default()
         });
         let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pinturapp-viewport-scene-bind-group"),
@@ -414,14 +332,6 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: albedo_params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&hdri_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&hdri_sampler),
                 },
             ],
         });
@@ -590,7 +500,6 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
             *prepared = Some(Prepared {
                 _scene_color_texture: scene_color_texture,
                 _scene_depth_texture: scene_depth_texture,
-                _hdri_texture: hdri_texture,
                 composite_pipeline,
                 composite_bind_group,
             });
@@ -694,16 +603,54 @@ pub fn load_hdri_map(path: &Path) -> Result<HdriMap, String> {
         .decode()
         .map_err(|err| format!("Failed to decode HDRI '{}': {err}", path.display()))?;
     let rgb32 = decoded.to_rgb32f();
-    let mut rgba16f = Vec::with_capacity((rgb32.width() as usize) * (rgb32.height() as usize) * 4);
-    for px in rgb32.pixels() {
-        rgba16f.push(f16::from_f32(px[0].max(0.0)).to_bits());
-        rgba16f.push(f16::from_f32(px[1].max(0.0)).to_bits());
-        rgba16f.push(f16::from_f32(px[2].max(0.0)).to_bits());
-        rgba16f.push(f16::from_f32(1.0).to_bits());
+    let width = rgb32.width().max(1);
+    let height = rgb32.height().max(1);
+    let dtheta = std::f32::consts::TAU / width as f32;
+    let dphi = std::f32::consts::PI / height as f32;
+
+    let mut sh = [[0.0_f32; 3]; 9];
+    for y in 0..height {
+        let phi = ((y as f32) + 0.5) * dphi;
+        let sin_phi = phi.sin();
+        let cos_phi = phi.cos();
+        for x in 0..width {
+            let theta = ((x as f32) + 0.5) * dtheta - std::f32::consts::PI;
+            let dir = [sin_phi * theta.cos(), cos_phi, sin_phi * theta.sin()];
+            let basis = sh_basis(dir);
+            let px = rgb32.get_pixel(x, y);
+            let l = [px[0].max(0.0), px[1].max(0.0), px[2].max(0.0)];
+            let weight = sin_phi * dtheta * dphi;
+            for i in 0..9 {
+                sh[i][0] += l[0] * basis[i] * weight;
+                sh[i][1] += l[1] * basis[i] * weight;
+                sh[i][2] += l[2] * basis[i] * weight;
+            }
+        }
+    }
+    let mut sh_coeffs = [[0.0_f32; 4]; 9];
+    for i in 0..9 {
+        sh_coeffs[i][0] = sh[i][0];
+        sh_coeffs[i][1] = sh[i][1];
+        sh_coeffs[i][2] = sh[i][2];
     }
     Ok(HdriMap {
-        width: rgb32.width().max(1),
-        height: rgb32.height().max(1),
-        rgba16f: Arc::new(rgba16f),
+        sh_coeffs,
     })
+}
+
+fn sh_basis(dir: [f32; 3]) -> [f32; 9] {
+    let x = dir[0];
+    let y = dir[1];
+    let z = dir[2];
+    [
+        0.282095,
+        0.488603 * y,
+        0.488603 * z,
+        0.488603 * x,
+        1.092548 * x * y,
+        1.092548 * y * z,
+        0.315392 * (3.0 * z * z - 1.0),
+        1.092548 * x * z,
+        0.546274 * (x * x - y * y),
+    ]
 }
