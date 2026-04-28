@@ -1,3 +1,4 @@
+mod assets;
 mod painting;
 mod project;
 pub mod state;
