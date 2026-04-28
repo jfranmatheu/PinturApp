@@ -572,14 +572,14 @@ impl PinturappUi {
                             if recent.is_empty() {
                                 cols[1].small("No recent projects yet.");
                             } else {
-                                for path in recent.iter().take(10) {
+                                for (row_idx, path) in recent.iter().take(10).enumerate() {
                                     let label = path
                                     .file_name()
                                     .map(|n| n.to_string_lossy().to_string())
                                     .unwrap_or_else(|| path.display().to_string());
                                     let row_rect = cols[1]
                                         .allocate_exact_size(
-                                            egui::vec2(cols[1].available_width(), 24.0),
+                                            egui::vec2(cols[1].available_width(), 26.0),
                                             egui::Sense::click(),
                                         )
                                         .0;
@@ -593,7 +593,7 @@ impl PinturappUi {
                                         cols[1].painter().rect_filled(
                                             row_rect,
                                             4.0,
-                                            egui::Color32::from_rgb(38, 47, 62),
+                                            egui::Color32::from_rgba_unmultiplied(84, 112, 146, 48),
                                         );
                                     }
                                     cols[1].painter().text(
@@ -602,11 +602,24 @@ impl PinturappUi {
                                         label,
                                         egui::FontId::proportional(14.0),
                                         if response.hovered() {
-                                            egui::Color32::from_rgb(245, 250, 255)
+                                            egui::Color32::from_rgb(236, 244, 252)
                                         } else {
                                             egui::Color32::from_rgb(205, 216, 230)
                                         },
                                     );
+                                    if row_idx + 1 < recent.len().min(10) {
+                                        let y = row_rect.bottom() - 0.5;
+                                        cols[1].painter().line_segment(
+                                            [
+                                                egui::pos2(row_rect.left() + 8.0, y),
+                                                egui::pos2(row_rect.right() - 8.0, y),
+                                            ],
+                                            egui::Stroke::new(
+                                                1.0,
+                                                egui::Color32::from_rgba_unmultiplied(140, 156, 178, 26),
+                                            ),
+                                        );
+                                    }
                                     if response.clicked() {
                                         self.request_load_action(PendingLoadAction::LoadProject(path.clone()));
                                         dismiss_overlay = true;
