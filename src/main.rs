@@ -65,6 +65,7 @@ struct PinturappUi {
     pending_load_action: Option<PendingLoadAction>,
     show_discard_confirm: bool,
     show_autosave_recovery_prompt: bool,
+    show_welcome_overlay: bool,
     theme_applied: bool,
 }
 
@@ -102,6 +103,7 @@ impl Default for PinturappUi {
             pending_load_action: None,
             show_discard_confirm: false,
             show_autosave_recovery_prompt,
+            show_welcome_overlay: true,
             theme_applied: false,
         }
     }
@@ -241,7 +243,14 @@ impl eframe::App for PinturappUi {
                 ui.separator();
                 ui.label(format!("Texture: {texture_status}"));
                 ui.separator();
-                ui.label(self.autosave_status_text());
+                let dirty_label = if self.is_dirty {
+                    "State: Unsaved changes"
+                } else {
+                    "State: Saved"
+                };
+                ui.label(dirty_label);
+                ui.separator();
+                ui.label(format!("Autosave: {}", self.autosave_status_text()));
             });
         });
 
@@ -253,17 +262,17 @@ impl eframe::App for PinturappUi {
                 ui.separator();
                 Self::panel_card().show(ui, |ui| {
                     ui.strong("Viewport Controls");
-                    ui.label("LMB Drag: Paint");
-                    ui.label("RMB Drag: Orbit");
-                    ui.label("Scroll: Zoom");
+                    ui.small("LMB Drag: Paint");
+                    ui.small("RMB Drag: Orbit");
+                    ui.small("Scroll: Zoom");
                 });
                 ui.add_space(8.0);
                 Self::panel_card().show(ui, |ui| {
                     ui.strong("Material");
                     if let Some(path) = &self.loaded_texture_path {
-                        ui.label(format!("Texture: {}", path.display()));
+                        ui.small(format!("Texture: {}", path.display()));
                     } else {
-                        ui.label("Texture: UV gradient fallback");
+                        ui.small("Texture: UV gradient fallback");
                     }
                 });
                 ui.add_space(8.0);
@@ -278,39 +287,15 @@ impl eframe::App for PinturappUi {
                     if ui.color_edit_button_srgba(&mut self.brush_color).changed() {
                         self.is_dirty = true;
                     }
-                    ui.label(format!("Undo: {}", self.undo_stack.len()));
-                    ui.label(format!("Redo: {}", self.redo_stack.len()));
+                    ui.small(format!("Undo: {}", self.undo_stack.len()));
+                    ui.small(format!("Redo: {}", self.redo_stack.len()));
                 });
                 if let Some(path) = &self.current_project_path {
                     ui.add_space(8.0);
                     Self::panel_card().show(ui, |ui| {
                         ui.strong("Project");
-                        ui.label(path.display().to_string());
+                        ui.small(path.display().to_string());
                     });
-                }
-                ui.separator();
-                ui.strong("Recent Projects");
-                let recent = self.recent_projects.clone();
-                let mut remove_recent_at: Option<usize> = None;
-                for (idx, path) in recent.iter().take(8).enumerate() {
-                    let label = path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path.display().to_string());
-                    ui.horizontal(|ui| {
-                        if ui.button(label).clicked() {
-                            self.request_load_action(PendingLoadAction::LoadProject(path.clone()));
-                        }
-                        if ui.small_button("Remove").clicked() {
-                            remove_recent_at = Some(idx);
-                        }
-                    });
-                }
-                if let Some(idx) = remove_recent_at {
-                    self.remove_recent_project(idx);
-                }
-                if !self.recent_projects.is_empty() && ui.small_button("Clear All").clicked() {
-                    self.clear_recent_projects();
                 }
             });
 
@@ -429,6 +414,7 @@ impl eframe::App for PinturappUi {
                 ui.colored_label(egui::Color32::RED, format!("Load error: {err}"));
             }
         });
+        self.show_welcome_overlay_if_needed(ui.ctx());
         self.show_discard_confirm_dialog(ui.ctx());
         self.show_autosave_recovery_dialog(ui.ctx());
         self.maybe_autosave();
@@ -444,6 +430,26 @@ impl PinturappUi {
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(45, 58, 78)))
             .corner_radius(egui::CornerRadius::same(8))
             .inner_margin(egui::Margin::same(10))
+    }
+
+    fn shorten_path(path: &Path, max_chars: usize) -> String {
+        let text = path.display().to_string();
+        if text.chars().count() <= max_chars {
+            return text;
+        }
+        if max_chars <= 3 {
+            return "...".to_string();
+        }
+        let keep = max_chars - 3;
+        let tail: String = text
+            .chars()
+            .rev()
+            .take(keep)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        format!("...{tail}")
     }
 
     fn apply_modern_theme(&mut self, ctx: &egui::Context) {
@@ -499,6 +505,107 @@ impl PinturappUi {
         }
         if redo {
             self.redo_paint();
+        }
+    }
+
+    fn show_welcome_overlay_if_needed(&mut self, ctx: &egui::Context) {
+        if !self.show_welcome_overlay || self.loaded_mesh.is_some() {
+            return;
+        }
+        if self.show_discard_confirm || self.show_autosave_recovery_prompt {
+            return;
+        }
+
+        let screen_rect = ctx.content_rect();
+        let panel_size = egui::vec2(
+            (screen_rect.width() * 0.62).clamp(460.0, 920.0),
+            (screen_rect.height() * 0.72).clamp(340.0, 760.0),
+        );
+        let panel_rect = egui::Rect::from_center_size(screen_rect.center(), panel_size);
+        let mut dismiss_overlay = false;
+        let mut remove_recent_at: Option<usize> = None;
+
+        egui::Area::new("welcome_overlay".into())
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen_rect.min)
+            .interactable(true)
+            .show(ctx, |ui| {
+                ui.set_min_size(screen_rect.size());
+                let full_rect = ui.max_rect();
+                let backdrop = ui.allocate_rect(full_rect, egui::Sense::click());
+                ui.painter()
+                    .rect_filled(full_rect, 0.0, egui::Color32::from_black_alpha(170));
+
+                ui.scope_builder(egui::UiBuilder::new().max_rect(panel_rect), |ui| {
+                    Self::panel_card().show(ui, |ui| {
+                        ui.heading("Welcome to Pinturapp");
+                        ui.small("Load a project or start from scratch.");
+                        ui.add_space(8.0);
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.button("New Project").clicked() {
+                                self.request_load_action(PendingLoadAction::NewProject);
+                                dismiss_overlay = true;
+                            }
+                            if ui.button("Load Project...").clicked() {
+                                self.request_load_action(PendingLoadAction::OpenProjectPicker);
+                                dismiss_overlay = true;
+                            }
+                            if ui.button("Load OBJ...").clicked() {
+                                self.pick_and_load_obj();
+                                dismiss_overlay = true;
+                            }
+                            if ui.button("Load Texture...").clicked() {
+                                self.pick_and_load_texture();
+                                dismiss_overlay = true;
+                            }
+                        });
+                        ui.add_space(10.0);
+                        ui.strong("Recent Projects");
+                        let recent = self.recent_projects.clone();
+                        if recent.is_empty() {
+                            ui.small("No recent projects yet.");
+                        } else {
+                            for (idx, path) in recent.iter().take(8).enumerate() {
+                                let label = path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| path.display().to_string());
+                                Self::panel_card().show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Open").clicked() {
+                                            self.request_load_action(PendingLoadAction::LoadProject(path.clone()));
+                                            dismiss_overlay = true;
+                                        }
+                                        if ui.small_button("Remove").clicked() {
+                                            remove_recent_at = Some(idx);
+                                        }
+                                    });
+                                    ui.strong(label);
+                                    ui.small(Self::shorten_path(path, 86));
+                                });
+                                ui.add_space(6.0);
+                            }
+                        }
+                        if !self.recent_projects.is_empty() && ui.small_button("Clear All").clicked() {
+                            self.clear_recent_projects();
+                        }
+                    });
+                });
+
+                if backdrop.clicked() {
+                    if let Some(pos) = backdrop.interact_pointer_pos() {
+                        if !panel_rect.contains(pos) {
+                            dismiss_overlay = true;
+                        }
+                    }
+                }
+            });
+
+        if let Some(idx) = remove_recent_at {
+            self.remove_recent_project(idx);
+        }
+        if dismiss_overlay {
+            self.show_welcome_overlay = false;
         }
     }
 
@@ -617,6 +724,7 @@ impl PinturappUi {
                 self.orbit_pitch = 0.25;
                 self.orbit_distance = 3.0;
                 self.is_dirty = true;
+                self.show_welcome_overlay = false;
             }
             Err(err) => {
                 self.loaded_mesh = None;
@@ -756,13 +864,22 @@ impl PinturappUi {
             PendingLoadAction::NewProject => {
                 self.clear_session();
                 self.last_error = None;
+                self.show_welcome_overlay = false;
             }
             PendingLoadAction::OpenProjectPicker => self.load_project_from_file(),
             PendingLoadAction::LoadProject(path) => match self.load_project_from_path(&path) {
-                Ok(()) => self.last_error = None,
+                Ok(()) => {
+                    self.last_error = None;
+                    self.show_welcome_overlay = false;
+                }
                 Err(err) => self.last_error = Some(err),
             },
-            PendingLoadAction::LoadAutosave => self.load_autosave(),
+            PendingLoadAction::LoadAutosave => {
+                self.load_autosave();
+                if self.last_error.is_none() {
+                    self.show_welcome_overlay = false;
+                }
+            }
         }
     }
 
@@ -1012,12 +1129,12 @@ impl PinturappUi {
     fn autosave_status_text(&self) -> String {
         if let Some(last_ok) = self.last_autosave_ok_at {
             let secs = last_ok.elapsed().as_secs();
-            return format!("Autosave: {secs}s ago");
+            return format!("{secs}s ago");
         }
         if self.autosave_path.exists() {
-            return "Autosave: available".to_string();
+            return "available".to_string();
         }
-        "Autosave: pending".to_string()
+        "pending".to_string()
     }
 
     fn record_recent_project(&mut self, path: PathBuf) {
