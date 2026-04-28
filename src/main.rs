@@ -440,63 +440,6 @@ impl PinturappUi {
             .inner_margin(egui::Margin::same(14))
     }
 
-    fn welcome_action_tile(ui: &mut egui::Ui, title: &str, hint: &str, description: &str) -> bool {
-        let mut clicked = false;
-        egui::Frame::default()
-            .fill(egui::Color32::from_rgb(23, 30, 42))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(54, 70, 92)))
-            .corner_radius(egui::CornerRadius::same(8))
-            .inner_margin(egui::Margin::same(10))
-            .show(ui, |ui| {
-            ui.set_min_height(110.0);
-            if ui
-                .add_sized(
-                    egui::vec2(ui.available_width(), 34.0),
-                    egui::Button::new(egui::RichText::new(title).strong()),
-                )
-                .clicked()
-            {
-                clicked = true;
-            }
-            ui.add_space(4.0);
-            ui.small(description);
-            ui.add_space(2.0);
-            Self::shortcut_chip(ui, hint);
-        });
-        clicked
-    }
-
-    fn shortcut_chip(ui: &mut egui::Ui, text: &str) {
-        egui::Frame::default()
-            .fill(egui::Color32::from_rgb(33, 41, 54))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(54, 70, 92)))
-            .corner_radius(egui::CornerRadius::same(6))
-            .inner_margin(egui::Margin::symmetric(6, 2))
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new(text).monospace().small());
-            });
-    }
-
-    fn shorten_path(path: &Path, max_chars: usize) -> String {
-        let text = path.display().to_string();
-        if text.chars().count() <= max_chars {
-            return text;
-        }
-        if max_chars <= 3 {
-            return "...".to_string();
-        }
-        let keep = max_chars - 3;
-        let tail: String = text
-            .chars()
-            .rev()
-            .take(keep)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        format!("...{tail}")
-    }
-
     fn apply_modern_theme(&mut self, ctx: &egui::Context) {
         if self.theme_applied {
             return;
@@ -568,7 +511,6 @@ impl PinturappUi {
         );
         let panel_rect = egui::Rect::from_center_size(screen_rect.center(), panel_size);
         let mut dismiss_overlay = false;
-        let mut remove_recent_at: Option<usize> = None;
 
         egui::Area::new("welcome_overlay".into())
             .order(egui::Order::Foreground)
@@ -584,101 +526,94 @@ impl PinturappUi {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(panel_rect), |ui| {
                     Self::welcome_surface().show(ui, |ui| {
                         ui.heading("Pinturapp");
-                        ui.label("Welcome back. Start a new canvas or jump into a recent project.");
-                        ui.add_space(4.0);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(egui::RichText::new("Quick Actions").strong());
-                            Self::shortcut_chip(ui, "Ctrl+N");
-                            Self::shortcut_chip(ui, "Ctrl+O");
-                            Self::shortcut_chip(ui, "Ctrl+Shift+O");
-                        });
+                        ui.label("Start a new project or continue from recent work.");
                         ui.add_space(10.0);
                         ui.columns(2, |cols| {
-                            if Self::welcome_action_tile(
-                                &mut cols[0],
-                                "New Project",
-                                "Ctrl+N",
-                                "Start from a clean project state.",
-                            ) {
+                            cols[0].label(egui::RichText::new("Actions").strong());
+                            cols[0].add_space(6.0);
+                            if cols[0]
+                                .add_sized(
+                                    egui::vec2(cols[0].available_width(), 36.0),
+                                    egui::Button::new("New Project  Ctrl+N"),
+                                )
+                                .clicked()
+                            {
                                 self.request_load_action(PendingLoadAction::NewProject);
                                 dismiss_overlay = true;
                             }
                             cols[0].add_space(8.0);
-                            if Self::welcome_action_tile(
-                                &mut cols[0],
-                                "Load Autosave",
-                                "Ctrl+Shift+O",
-                                "Recover latest autosaved state.",
-                            ) {
-                                self.request_load_action(PendingLoadAction::LoadAutosave);
-                                dismiss_overlay = true;
-                            }
-                            cols[0].add_space(8.0);
-                            if Self::welcome_action_tile(
-                                &mut cols[0],
-                                "Load Texture",
-                                "File Menu",
-                                "Apply a base texture before painting.",
-                            ) {
-                                self.pick_and_load_texture();
-                                dismiss_overlay = true;
-                            }
-
-                            if Self::welcome_action_tile(
-                                &mut cols[1],
-                                "Load Project",
-                                "Ctrl+O",
-                                "Open a .pinturaproj bundle.",
-                            ) {
+                            if cols[0]
+                                .add_sized(
+                                    egui::vec2(cols[0].available_width(), 36.0),
+                                    egui::Button::new("Load Project  Ctrl+O"),
+                                )
+                                .clicked()
+                            {
                                 self.request_load_action(PendingLoadAction::OpenProjectPicker);
                                 dismiss_overlay = true;
                             }
-                            cols[1].add_space(8.0);
-                            if Self::welcome_action_tile(
-                                &mut cols[1],
-                                "Load OBJ",
-                                "File Menu",
-                                "Import geometry into the viewport.",
-                            ) {
-                                self.pick_and_load_obj();
-                                dismiss_overlay = true;
+                            if self.autosave_path.exists() {
+                                cols[0].add_space(8.0);
+                                if cols[0]
+                                    .add_sized(
+                                        egui::vec2(cols[0].available_width(), 36.0),
+                                        egui::Button::new("Load Autosave  Ctrl+Shift+O"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.request_load_action(PendingLoadAction::LoadAutosave);
+                                    dismiss_overlay = true;
+                                }
                             }
-                        });
 
-                        ui.add_space(12.0);
-                        ui.separator();
-                        ui.add_space(8.0);
-                        ui.strong("Recent Projects");
-                        ui.small("You can also open these from File > Recent Projects.");
-                        let recent = self.recent_projects.clone();
-                        if recent.is_empty() {
-                            ui.add_space(4.0);
-                            ui.small("No recent projects yet.");
-                        } else {
-                            for (idx, path) in recent.iter().take(8).enumerate() {
-                                let label = path
+                            cols[1].label(egui::RichText::new("Recent Projects").strong());
+                            cols[1].add_space(6.0);
+                            let recent = self.recent_projects.clone();
+                            if recent.is_empty() {
+                                cols[1].small("No recent projects yet.");
+                            } else {
+                                for path in recent.iter().take(10) {
+                                    let label = path
                                     .file_name()
                                     .map(|n| n.to_string_lossy().to_string())
                                     .unwrap_or_else(|| path.display().to_string());
-                                Self::panel_card().show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        if ui.button("Open").clicked() {
-                                            self.request_load_action(PendingLoadAction::LoadProject(path.clone()));
-                                            dismiss_overlay = true;
-                                        }
-                                        if ui.small_button("Remove").clicked() {
-                                            remove_recent_at = Some(idx);
-                                        }
-                                    });
-                                    ui.strong(label);
-                                    ui.small(Self::shorten_path(path, 96));
-                                });
-                                ui.add_space(6.0);
+                                    let row_rect = cols[1]
+                                        .allocate_exact_size(
+                                            egui::vec2(cols[1].available_width(), 24.0),
+                                            egui::Sense::click(),
+                                        )
+                                        .0;
+                                    let response = cols[1].interact(
+                                        row_rect,
+                                        cols[1].id().with(path),
+                                        egui::Sense::click(),
+                                    );
+
+                                    if response.hovered() {
+                                        cols[1].painter().rect_filled(
+                                            row_rect,
+                                            4.0,
+                                            egui::Color32::from_rgb(38, 47, 62),
+                                        );
+                                    }
+                                    cols[1].painter().text(
+                                        row_rect.left_center() + egui::vec2(8.0, 0.0),
+                                        egui::Align2::LEFT_CENTER,
+                                        label,
+                                        egui::FontId::proportional(14.0),
+                                        if response.hovered() {
+                                            egui::Color32::from_rgb(245, 250, 255)
+                                        } else {
+                                            egui::Color32::from_rgb(205, 216, 230)
+                                        },
+                                    );
+                                    if response.clicked() {
+                                        self.request_load_action(PendingLoadAction::LoadProject(path.clone()));
+                                        dismiss_overlay = true;
+                                    }
+                                }
                             }
-                        }
-                        if !self.recent_projects.is_empty() && ui.small_button("Clear All").clicked() {
-                            self.clear_recent_projects();
-                        }
+                        });
                     });
                 });
 
@@ -691,9 +626,6 @@ impl PinturappUi {
                 }
             });
 
-        if let Some(idx) = remove_recent_at {
-            self.remove_recent_project(idx);
-        }
         if dismiss_overlay {
             self.show_welcome_overlay = false;
         }
@@ -1233,14 +1165,6 @@ impl PinturappUi {
         if self.recent_projects.len() > 10 {
             self.recent_projects.truncate(10);
         }
-        let _ = save_recent_projects(&self.storage_dir, &self.recent_projects);
-    }
-
-    fn remove_recent_project(&mut self, index: usize) {
-        if index >= self.recent_projects.len() {
-            return;
-        }
-        self.recent_projects.remove(index);
         let _ = save_recent_projects(&self.storage_dir, &self.recent_projects);
     }
 
