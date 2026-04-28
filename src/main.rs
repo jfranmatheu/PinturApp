@@ -60,6 +60,7 @@ struct PinturappUi {
     storage_dir: PathBuf,
     autosave_path: PathBuf,
     last_autosave_at: Instant,
+    last_autosave_ok_at: Option<Instant>,
     is_dirty: bool,
     pending_load_action: Option<PendingLoadAction>,
     show_discard_confirm: bool,
@@ -96,6 +97,7 @@ impl Default for PinturappUi {
             storage_dir,
             autosave_path,
             last_autosave_at: Instant::now(),
+            last_autosave_ok_at: None,
             is_dirty: false,
             pending_load_action: None,
             show_discard_confirm: false,
@@ -131,10 +133,27 @@ impl eframe::App for PinturappUi {
                         self.request_load_action(PendingLoadAction::OpenProjectPicker);
                         ui.close();
                     }
-                    if ui.button("Load Autosave").clicked() {
+                    if ui.button("Load Autosave  Ctrl+Shift+O").clicked() {
                         self.request_load_action(PendingLoadAction::LoadAutosave);
                         ui.close();
                     }
+                    ui.menu_button("Recent Projects", |ui| {
+                        let recent = self.recent_projects.clone();
+                        if recent.is_empty() {
+                            ui.label("No recent projects");
+                        } else {
+                            for path in recent.iter().take(10) {
+                                let label = path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| path.display().to_string());
+                                if ui.button(label).clicked() {
+                                    self.request_load_action(PendingLoadAction::LoadProject(path.clone()));
+                                    ui.close();
+                                }
+                            }
+                        }
+                    });
                     ui.separator();
                     if ui.button("Save Texture...").clicked() {
                         self.save_texture_to_file();
@@ -187,6 +206,42 @@ impl eframe::App for PinturappUi {
                         ui.label("Untitled project");
                     }
                 });
+            });
+        });
+        egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                let mesh_status = self
+                    .loaded_mesh
+                    .as_ref()
+                    .map(|m| {
+                        m.source_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "Loaded mesh".to_string())
+                    })
+                    .unwrap_or_else(|| "No mesh".to_string());
+                let texture_status = self
+                    .loaded_texture_path
+                    .as_ref()
+                    .map(|p| {
+                        p.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "Texture loaded".to_string())
+                    })
+                    .unwrap_or_else(|| "No texture".to_string());
+                ui.label(format!(
+                    "Project: {}",
+                    self.current_project_path
+                        .as_ref()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .unwrap_or_else(|| "Untitled".to_string())
+                ));
+                ui.separator();
+                ui.label(format!("Mesh: {mesh_status}"));
+                ui.separator();
+                ui.label(format!("Texture: {texture_status}"));
+                ui.separator();
+                ui.label(self.autosave_status_text());
             });
         });
 
@@ -411,10 +466,11 @@ impl PinturappUi {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        let (new_project, load_project, save_project, save_project_as, undo, redo) = ctx.input(|i| {
+        let (new_project, load_project, load_autosave, save_project, save_project_as, undo, redo) = ctx.input(|i| {
             (
                 i.modifiers.command && i.key_pressed(egui::Key::N),
                 i.modifiers.command && i.key_pressed(egui::Key::O),
+                i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::O),
                 i.modifiers.command && i.key_pressed(egui::Key::S) && !i.modifiers.shift,
                 i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::S),
                 i.modifiers.command && i.key_pressed(egui::Key::Z) && !i.modifiers.shift,
@@ -428,6 +484,9 @@ impl PinturappUi {
         }
         if load_project {
             self.request_load_action(PendingLoadAction::OpenProjectPicker);
+        }
+        if load_autosave {
+            self.request_load_action(PendingLoadAction::LoadAutosave);
         }
         if save_project {
             self.save_project_to_file();
@@ -947,6 +1006,18 @@ impl PinturappUi {
             return;
         }
         self.last_autosave_at = Instant::now();
+        self.last_autosave_ok_at = Some(self.last_autosave_at);
+    }
+
+    fn autosave_status_text(&self) -> String {
+        if let Some(last_ok) = self.last_autosave_ok_at {
+            let secs = last_ok.elapsed().as_secs();
+            return format!("Autosave: {secs}s ago");
+        }
+        if self.autosave_path.exists() {
+            return "Autosave: available".to_string();
+        }
+        "Autosave: pending".to_string()
     }
 
     fn record_recent_project(&mut self, path: PathBuf) {
