@@ -2,6 +2,7 @@ use crate::io::mesh_loader::MeshData;
 use crate::renderer::SurfaceHit;
 use glam::{Vec2, Vec3, vec3};
 use image::RgbaImage;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
@@ -80,9 +81,18 @@ pub struct BrushInput {
     pub center_uv: [f32; 2],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BrushBlendMode {
     Normal,
+    Multiply,
+    Screen,
+}
+
+impl Default for BrushBlendMode {
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -124,7 +134,7 @@ pub fn paint_projected_brush_into(
 
     let brush_color = dispatch.resolved_color();
     let src_alpha = brush_color[3] as f32 / 255.0;
-    let painted = apply_brush_mask(texture, &mask, brush_color, src_alpha);
+    let painted = apply_brush_mask(texture, &mask, brush_color, src_alpha, dispatch.blend_mode);
     if painted {
         if let Some(cache) = uv_coverage_cache {
             cache.ensure_for(mesh, w, h);
@@ -267,7 +277,13 @@ pub fn build_projected_brush_mask(
     if mask.is_empty() { None } else { Some(mask) }
 }
 
-pub fn apply_brush_mask(texture: &mut RgbaImage, mask: &BrushMask, src: [u8; 4], src_alpha: f32) -> bool {
+pub fn apply_brush_mask(
+    texture: &mut RgbaImage,
+    mask: &BrushMask,
+    src: [u8; 4],
+    src_alpha: f32,
+    blend_mode: BrushBlendMode,
+) -> bool {
     let width = texture.width().max(1) as usize;
     let mut painted_any = false;
     for idx in &mask.touched {
@@ -284,13 +300,25 @@ pub fn apply_brush_mask(texture: &mut RgbaImage, mask: &BrushMask, src: [u8; 4],
         let y = (*idx / width) as u32;
         let px = texture.get_pixel_mut(x, y);
         let dst = px.0;
-        let out_r = src[0] as f32 * alpha + dst[0] as f32 * (1.0 - alpha);
-        let out_g = src[1] as f32 * alpha + dst[1] as f32 * (1.0 - alpha);
-        let out_b = src[2] as f32 * alpha + dst[2] as f32 * (1.0 - alpha);
-        *px = image::Rgba([out_r as u8, out_g as u8, out_b as u8, 255]);
+        let out_r = blend_channel(src[0], dst[0], alpha, blend_mode);
+        let out_g = blend_channel(src[1], dst[1], alpha, blend_mode);
+        let out_b = blend_channel(src[2], dst[2], alpha, blend_mode);
+        *px = image::Rgba([out_r, out_g, out_b, 255]);
         painted_any = true;
     }
     painted_any
+}
+
+fn blend_channel(src: u8, dst: u8, alpha: f32, blend_mode: BrushBlendMode) -> u8 {
+    let src_f = src as f32;
+    let dst_f = dst as f32;
+    let blended = match blend_mode {
+        BrushBlendMode::Normal => src_f,
+        BrushBlendMode::Multiply => (src_f * dst_f) / 255.0,
+        BrushBlendMode::Screen => 255.0 - ((255.0 - src_f) * (255.0 - dst_f)) / 255.0,
+    };
+    let out = blended * alpha + dst_f * (1.0 - alpha);
+    out.clamp(0.0, 255.0).round() as u8
 }
 
 pub fn apply_texture_padding(texture: &mut RgbaImage, mask: &BrushMask, coverage: &[bool], iterations: usize) {

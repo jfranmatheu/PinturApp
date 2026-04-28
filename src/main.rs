@@ -12,7 +12,7 @@ mod ui;
 use app::PendingLoadAction;
 use image::RgbaImage;
 use io::mesh_loader::MeshData;
-use renderer::{PaintPipelineConfig, ScreenPickBuffer, UvCoverageCache};
+use renderer::{BrushBlendMode, PaintPipelineConfig, ScreenPickBuffer, UvCoverageCache};
 
 struct PinturappUi {
     loaded_mesh: Option<MeshData>,
@@ -31,6 +31,7 @@ struct PinturappUi {
     uv_coverage_cache: Option<UvCoverageCache>,
     brush_radius_px: f32,
     brush_color: egui::Color32,
+    brush_blend_mode: BrushBlendMode,
     undo_stack: VecDeque<RgbaImage>,
     redo_stack: VecDeque<RgbaImage>,
     is_painting_stroke: bool,

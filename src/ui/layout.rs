@@ -151,6 +151,36 @@ impl PinturappUi {
                 {
                     self.is_dirty = true;
                 }
+                egui::ComboBox::from_label("Blend")
+                    .selected_text(match self.brush_blend_mode {
+                        BrushBlendMode::Normal => "Normal",
+                        BrushBlendMode::Multiply => "Multiply",
+                        BrushBlendMode::Screen => "Screen",
+                    })
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_value(&mut self.brush_blend_mode, BrushBlendMode::Normal, "Normal")
+                            .changed()
+                        {
+                            self.is_dirty = true;
+                        }
+                        if ui
+                            .selectable_value(
+                                &mut self.brush_blend_mode,
+                                BrushBlendMode::Multiply,
+                                "Multiply",
+                            )
+                            .changed()
+                        {
+                            self.is_dirty = true;
+                        }
+                        if ui
+                            .selectable_value(&mut self.brush_blend_mode, BrushBlendMode::Screen, "Screen")
+                            .changed()
+                        {
+                            self.is_dirty = true;
+                        }
+                    });
                 ui.small("Higher values pad farther into UV gutter to reduce seam filtering artifacts.");
             });
             ui.small(format!("Undo: {}", self.undo_stack.len()));
@@ -223,7 +253,7 @@ impl PinturappUi {
                             radius_px: self.brush_radius_px,
                             color: self.brush_color.to_array(),
                             pressure: 1.0,
-                            blend_mode: BrushBlendMode::Normal,
+                            blend_mode: self.brush_blend_mode,
                         },
                     );
                     ui.ctx().request_repaint();

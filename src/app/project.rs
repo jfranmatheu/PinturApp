@@ -21,6 +21,7 @@ impl PinturappUi {
             orbit_distance: self.orbit_distance,
             brush_radius_px: self.brush_radius_px,
             brush_color_rgba: self.brush_color.to_array(),
+            brush_blend_mode: self.brush_blend_mode,
             seam_padding_iterations: self.paint_pipeline_config.padding_iterations,
         }
     }
@@ -36,6 +37,7 @@ impl PinturappUi {
             state.brush_color_rgba[2],
             state.brush_color_rgba[3],
         );
+        self.brush_blend_mode = state.brush_blend_mode;
         self.paint_pipeline_config.padding_iterations = state.seam_padding_iterations.clamp(0, 8);
 
         self.loaded_mesh = None;
@@ -155,6 +157,7 @@ impl PinturappUi {
         self.mesh_center = Vec3::ZERO;
         self.mesh_fit_scale = 1.0;
         self.paint_pipeline_config = Default::default();
+        self.brush_blend_mode = Default::default();
         self.is_painting_stroke = false;
         self.current_project_path = None;
         self.clear_history();

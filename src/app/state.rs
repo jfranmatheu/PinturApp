@@ -1,3 +1,4 @@
+use crate::renderer::BrushBlendMode;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,12 +13,18 @@ pub struct ProjectState {
     pub orbit_distance: f32,
     pub brush_radius_px: f32,
     pub brush_color_rgba: [u8; 4],
+    #[serde(default = "default_brush_blend_mode")]
+    pub brush_blend_mode: BrushBlendMode,
     #[serde(default = "default_seam_padding_iterations")]
     pub seam_padding_iterations: usize,
 }
 
 fn default_seam_padding_iterations() -> usize {
     2
+}
+
+fn default_brush_blend_mode() -> BrushBlendMode {
+    BrushBlendMode::Normal
 }
 
 #[derive(Debug, Clone)]

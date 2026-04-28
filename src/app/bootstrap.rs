@@ -1,5 +1,6 @@
 use crate::PinturappUi;
 use crate::app::{default_storage_dir, load_recent_projects};
+use crate::renderer::BrushBlendMode;
 use eframe::egui;
 use glam::Vec3;
 use std::collections::VecDeque;
@@ -30,6 +31,7 @@ impl Default for PinturappUi {
             uv_coverage_cache: None,
             brush_radius_px: 12.0,
             brush_color: egui::Color32::from_rgba_unmultiplied(255, 90, 90, 255),
+            brush_blend_mode: BrushBlendMode::Normal,
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
             is_painting_stroke: false,
