@@ -34,7 +34,6 @@ impl Default for PinturappUi {
             brush_blend_mode: BrushBlendMode::Normal,
             use_tablet_pressure: true,
             tablet_pressure_detected: false,
-            pressure_smoothing: 0.25,
             last_brush_pressure: 1.0,
             display_brush_pressure: 1.0,
             undo_stack: VecDeque::new(),
