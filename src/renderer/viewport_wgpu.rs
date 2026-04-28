@@ -6,7 +6,7 @@ use eframe::wgpu;
 use glam::{Mat4, Vec3, vec3};
 use std::sync::Mutex;
 
-const VIEWPORT_WGSL: &str = r#"
+const SCENE_WGSL: &str = r#"
 struct Camera {
     mvp: mat4x4<f32>,
 };
@@ -59,6 +59,35 @@ fn fs_main(in_f: VSOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+const COMPOSITE_WGSL: &str = r#"
+struct VSOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@group(0) @binding(0) var scene_tex: texture_2d<f32>;
+@group(0) @binding(1) var scene_sampler: sampler;
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
+    var out: VSOut;
+    let p = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -3.0),
+        vec2<f32>(-1.0,  1.0),
+        vec2<f32>( 3.0,  1.0)
+    );
+    let xy = p[vid];
+    out.pos = vec4<f32>(xy, 0.0, 1.0);
+    out.uv = xy * 0.5 + vec2<f32>(0.5, 0.5);
+    return out;
+}
+
+@fragment
+fn fs_main(in_f: VSOut) -> @location(0) vec4<f32> {
+    return textureSample(scene_tex, scene_sampler, in_f.uv);
+}
+"#;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GpuVertex {
@@ -80,11 +109,10 @@ struct AlbedoParams {
 }
 
 struct Prepared {
-    pipeline: wgpu::RenderPipeline,
-    bind_group: wgpu::BindGroup,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    index_count: u32,
+    _scene_color_texture: wgpu::Texture,
+    _scene_depth_texture: wgpu::Texture,
+    composite_pipeline: wgpu::RenderPipeline,
+    composite_bind_group: wgpu::BindGroup,
 }
 
 struct ViewportCallback {
@@ -93,6 +121,7 @@ struct ViewportCallback {
     snapshot: GpuAlbedoSnapshot,
     camera: CameraUniform,
     target_format: wgpu::TextureFormat,
+    viewport_points: [f32; 2],
     prepared: Mutex<Option<Prepared>>,
 }
 
@@ -101,18 +130,25 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         &self,
         device: &wgpu::Device,
         _queue: &wgpu::Queue,
-        _screen_descriptor: &egui_wgpu::ScreenDescriptor,
+        screen_descriptor: &egui_wgpu::ScreenDescriptor,
         _egui_encoder: &mut wgpu::CommandEncoder,
         _callback_resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         use wgpu::util::DeviceExt as _;
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("pinturapp-viewport-wgpu-shader"),
-            source: wgpu::ShaderSource::Wgsl(VIEWPORT_WGSL.into()),
+        let viewport_w = ((self.viewport_points[0].max(1.0) * screen_descriptor.pixels_per_point).round()
+            as u32)
+            .max(1);
+        let viewport_h = ((self.viewport_points[1].max(1.0) * screen_descriptor.pixels_per_point).round()
+            as u32)
+            .max(1);
+
+        let scene_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("pinturapp-viewport-scene-shader"),
+            source: wgpu::ShaderSource::Wgsl(SCENE_WGSL.into()),
         });
-        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("pinturapp-viewport-wgpu-bind-layout"),
+        let scene_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("pinturapp-viewport-scene-bind-layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -146,16 +182,16 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 },
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("pinturapp-viewport-wgpu-pipeline-layout"),
-            bind_group_layouts: &[Some(&bind_layout)],
+        let scene_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("pinturapp-viewport-scene-pipeline-layout"),
+            bind_group_layouts: &[Some(&scene_bind_layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("pinturapp-viewport-wgpu-pipeline"),
-            layout: Some(&pipeline_layout),
+        let scene_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("pinturapp-viewport-scene-pipeline"),
+            layout: Some(&scene_pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &scene_shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[wgpu::VertexBufferLayout {
@@ -164,16 +200,25 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                     attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
                 }],
             },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
+            primitive: wgpu::PrimitiveState {
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &scene_shader,
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: self.target_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -195,9 +240,9 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
             contents: bytemuck::bytes_of(&albedo_params),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("pinturapp-viewport-wgpu-bind-group"),
-            layout: &bind_layout,
+        let scene_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pinturapp-viewport-scene-bind-group"),
+            layout: &scene_bind_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -224,16 +269,165 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let scene_color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("pinturapp-viewport-scene-color"),
+            size: wgpu::Extent3d {
+                width: viewport_w,
+                height: viewport_h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.target_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let scene_color_view = scene_color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let scene_depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("pinturapp-viewport-scene-depth"),
+            size: wgpu::Extent3d {
+                width: viewport_w,
+                height: viewport_h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let scene_depth_view = scene_depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("pinturapp-viewport-scene-encoder"),
+        });
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("pinturapp-viewport-scene-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &scene_color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.12,
+                            b: 0.15,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &scene_depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            rpass.set_pipeline(&scene_pipeline);
+            rpass.set_bind_group(0, &scene_bind_group, &[]);
+            rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            rpass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            rpass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
+        }
+
+        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("pinturapp-viewport-composite-shader"),
+            source: wgpu::ShaderSource::Wgsl(COMPOSITE_WGSL.into()),
+        });
+        let composite_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("pinturapp-viewport-composite-bind-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let composite_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("pinturapp-viewport-composite-pipeline-layout"),
+            bind_group_layouts: &[Some(&composite_bind_layout)],
+            immediate_size: 0,
+        });
+        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("pinturapp-viewport-composite-pipeline"),
+            layout: Some(&composite_layout),
+            vertex: wgpu::VertexState {
+                module: &composite_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &composite_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: self.target_format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+        let composite_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("pinturapp-viewport-composite-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let composite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pinturapp-viewport-composite-bind-group"),
+            layout: &composite_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&scene_color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&composite_sampler),
+                },
+            ],
+        });
+
         if let Ok(mut prepared) = self.prepared.lock() {
             *prepared = Some(Prepared {
-                pipeline,
-                bind_group,
-                vertex_buffer,
-                index_buffer,
-                index_count: self.indices.len() as u32,
+                _scene_color_texture: scene_color_texture,
+                _scene_depth_texture: scene_depth_texture,
+                composite_pipeline,
+                composite_bind_group,
             });
         }
-        Vec::new()
+        vec![encoder.finish()]
     }
 
     fn paint(
@@ -248,11 +442,9 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         let Some(prepared) = prepared.as_ref() else {
             return;
         };
-        render_pass.set_pipeline(&prepared.pipeline);
-        render_pass.set_bind_group(0, &prepared.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, prepared.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(prepared.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        render_pass.draw_indexed(0..prepared.index_count, 0, 0..1);
+        render_pass.set_pipeline(&prepared.composite_pipeline);
+        render_pass.set_bind_group(0, &prepared.composite_bind_group, &[]);
+        render_pass.draw(0..3, 0..1);
     }
 }
 
@@ -302,6 +494,7 @@ pub fn enqueue_gpu_viewport(
         snapshot: snapshot.clone(),
         camera: CameraUniform { mvp },
         target_format,
+        viewport_points: [rect.width(), rect.height()],
         prepared: Mutex::new(None),
     };
     painter.add(egui_wgpu::Callback::new_paint_callback(rect, callback));
