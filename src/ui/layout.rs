@@ -56,6 +56,15 @@ impl PinturappUi {
         );
     }
 
+    fn pressure_toggle_button(ui: &mut egui::Ui, enabled: &mut bool, label: &str) -> bool {
+        let text = if *enabled {
+            format!("[P] {label}")
+        } else {
+            format!("[ ] {label}")
+        };
+        ui.selectable_label(*enabled, text).clicked()
+    }
+
     pub(crate) fn show_status_bar_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
@@ -161,6 +170,10 @@ impl PinturappUi {
                 self.show_material_card(ui);
                 ui.add_space(6.0);
                 self.show_brush_card(ui);
+                ui.add_space(6.0);
+                self.show_color_card(ui);
+                ui.add_space(6.0);
+                self.show_pipeline_card(ui);
                 if let Some(path) = &self.current_project_path {
                     ui.add_space(6.0);
                     self.show_project_card(ui, path);
@@ -240,55 +253,91 @@ impl PinturappUi {
     fn show_brush_card(&mut self, ui: &mut egui::Ui) {
         Self::panel_card().show(ui, |ui| {
             Self::section_header(ui, "BRUSH");
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("S {:.1}px", self.brush_size_px))
+                        .monospace()
+                        .color(egui::Color32::from_rgb(202, 210, 226)),
+                );
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!("T {:.2}", self.brush_strength))
+                        .monospace()
+                        .color(egui::Color32::from_rgb(202, 210, 226)),
+                );
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!("P {:.2}", self.display_brush_pressure))
+                        .monospace()
+                        .color(egui::Color32::from_rgb(202, 210, 226)),
+                );
+            });
+            ui.add_space(4.0);
+
             if ui
-                .add(egui::Slider::new(&mut self.brush_radius_px, 1.0..=64.0).text("Radius"))
+                .add(egui::Slider::new(&mut self.brush_size_px, 1.0..=128.0).text("Size (px)"))
                 .changed()
             {
                 self.is_dirty = true;
             }
-            if ui.color_edit_button_srgba(&mut self.brush_color).changed() {
+
+            ui.horizontal_wrapped(|ui| {
+                ui.small("Presets");
+                for preset in [2.0_f32, 4.0, 8.0, 16.0, 32.0, 64.0] {
+                    if ui
+                        .selectable_label((self.brush_size_px - preset).abs() < 0.5, format!("{preset:.0}"))
+                        .clicked()
+                    {
+                        self.brush_size_px = preset;
+                        self.is_dirty = true;
+                    }
+                }
+            });
+
+            if ui
+                .add(egui::Slider::new(&mut self.brush_strength, 0.0..=1.0).text("Strength"))
+                .changed()
+            {
                 self.is_dirty = true;
             }
-            ui.collapsing("Advanced", |ui| {
+
+            ui.horizontal_wrapped(|ui| {
+                ui.small("Blend");
                 if ui
-                    .add(
-                        egui::Slider::new(&mut self.paint_pipeline_config.padding_iterations, 0..=8)
-                            .text("Seam Padding"),
-                    )
+                    .selectable_value(&mut self.brush_blend_mode, BrushBlendMode::Normal, "Normal")
                     .changed()
                 {
                     self.is_dirty = true;
                 }
-                egui::ComboBox::from_label("Blend")
-                    .selected_text(match self.brush_blend_mode {
-                        BrushBlendMode::Normal => "Normal",
-                        BrushBlendMode::Multiply => "Multiply",
-                        BrushBlendMode::Screen => "Screen",
-                    })
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_value(&mut self.brush_blend_mode, BrushBlendMode::Normal, "Normal")
-                            .changed()
-                        {
-                            self.is_dirty = true;
-                        }
-                        if ui
-                            .selectable_value(
-                                &mut self.brush_blend_mode,
-                                BrushBlendMode::Multiply,
-                                "Multiply",
-                            )
-                            .changed()
-                        {
-                            self.is_dirty = true;
-                        }
-                        if ui
-                            .selectable_value(&mut self.brush_blend_mode, BrushBlendMode::Screen, "Screen")
-                            .changed()
-                        {
-                            self.is_dirty = true;
-                        }
-                    });
+                if ui
+                    .selectable_value(&mut self.brush_blend_mode, BrushBlendMode::Multiply, "Multiply")
+                    .changed()
+                {
+                    self.is_dirty = true;
+                }
+                if ui
+                    .selectable_value(&mut self.brush_blend_mode, BrushBlendMode::Screen, "Screen")
+                    .changed()
+                {
+                    self.is_dirty = true;
+                }
+            });
+
+            ui.separator();
+            ui.group(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.small("Pressure");
+                    let pressure_mode = if self.use_tablet_pressure { "tablet" } else { "fixed" };
+                    let signal = if self.tablet_pressure_detected { "signal" } else { "no-signal" };
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "[{pressure_mode}] {:.2} [{signal}]",
+                            self.display_brush_pressure
+                        ))
+                        .monospace()
+                        .color(egui::Color32::from_rgb(186, 196, 216)),
+                    );
+                });
                 if ui
                     .checkbox(&mut self.use_tablet_pressure, "Use tablet pressure")
                     .changed()
@@ -298,11 +347,66 @@ impl PinturappUi {
                     }
                     self.is_dirty = true;
                 }
-                ui.small("Pressure is quantized to 2 decimals (no temporal smoothing).");
-                ui.small("Higher values pad farther into UV gutter to reduce seam filtering artifacts.");
+                ui.horizontal_wrapped(|ui| {
+                    if Self::pressure_toggle_button(ui, &mut self.use_pressure_for_size, "Affect Size") {
+                        self.use_pressure_for_size = !self.use_pressure_for_size;
+                        self.is_dirty = true;
+                    }
+                    if Self::pressure_toggle_button(
+                        ui,
+                        &mut self.use_pressure_for_strength,
+                        "Affect Strength",
+                    ) {
+                        self.use_pressure_for_strength = !self.use_pressure_for_strength;
+                        self.is_dirty = true;
+                    }
+                });
+                ui.small("Input is quantized to 2 decimals. No temporal smoothing.");
             });
-            ui.small(format!("Undo: {}", self.undo_stack.len()));
-            ui.small(format!("Redo: {}", self.redo_stack.len()));
+
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("Undo").clicked() {
+                    self.undo_paint();
+                }
+                if ui.button("Redo").clicked() {
+                    self.redo_paint();
+                }
+                ui.small(format!(
+                    "U:{}  R:{}",
+                    self.undo_stack.len(),
+                    self.redo_stack.len()
+                ));
+            });
+        });
+    }
+
+    fn show_color_card(&mut self, ui: &mut egui::Ui) {
+        Self::panel_card().show(ui, |ui| {
+            Self::section_header(ui, "COLOR");
+            if egui::color_picker::color_picker_color32(
+                ui,
+                &mut self.brush_color,
+                egui::color_picker::Alpha::Opaque,
+            ) {
+                self.is_dirty = true;
+            }
+        });
+    }
+
+    fn show_pipeline_card(&mut self, ui: &mut egui::Ui) {
+        Self::panel_card().show(ui, |ui| {
+            Self::section_header(ui, "PIPELINE");
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.paint_pipeline_config.padding_iterations, 0..=8)
+                        .text("Seam Padding"),
+                )
+                .changed()
+            {
+                self.is_dirty = true;
+            }
+            ui.small("Higher values pad farther into UV gutter to reduce seam filtering artifacts.");
         });
     }
 
@@ -365,11 +469,8 @@ impl PinturappUi {
             self.last_brush_pressure = 1.0;
         }
         if is_painting_now && !self.is_painting_stroke {
-            let can_start_stroke = !self.use_tablet_pressure || sampled_pressure.is_some();
-            if can_start_stroke {
-                self.begin_paint_stroke();
-                self.is_painting_stroke = true;
-            }
+            self.begin_paint_stroke();
+            self.is_painting_stroke = true;
         } else if !is_painting_now {
             self.is_painting_stroke = false;
         }
@@ -385,6 +486,17 @@ impl PinturappUi {
                 if let Some(pick) = &self.preview_pick_buffer
                     && let Some(sample) = sample_surface_from_buffer(mesh, pick, [sx, sy])
                 {
+                    let pressure_for_size = if self.use_pressure_for_size {
+                        self.last_brush_pressure
+                    } else {
+                        1.0
+                    };
+                    let pressure_for_strength = if self.use_pressure_for_strength {
+                        self.last_brush_pressure
+                    } else {
+                        1.0
+                    };
+                    let brush_size_px = (self.brush_size_px * pressure_for_size).clamp(1.0, 128.0);
                     self.paint_projected_brush(
                         mesh,
                         BrushInput {
@@ -394,9 +506,10 @@ impl PinturappUi {
                         },
                         BrushDispatch {
                             screen_pos: [sx, sy],
-                            radius_px: self.brush_radius_px,
+                            radius_px: (brush_size_px * 0.5).max(0.5),
+                            strength: self.brush_strength,
                             color: self.brush_color.to_array(),
-                            pressure: self.last_brush_pressure,
+                            pressure: pressure_for_strength,
                             blend_mode: self.brush_blend_mode,
                         },
                     );
@@ -542,8 +655,9 @@ impl PinturappUi {
 
         let pressure_mode = if self.use_tablet_pressure { "tablet" } else { "fixed" };
         let overlay = format!(
-            "R {:.0}px  P {:.2} ({})  Z {:.2}",
-            self.brush_radius_px,
+            "S {:.0}px  T {:.2}  P {:.2} ({})  Z {:.2}",
+            self.brush_size_px,
+            self.brush_strength,
             self.display_brush_pressure,
             pressure_mode,
             self.orbit_distance

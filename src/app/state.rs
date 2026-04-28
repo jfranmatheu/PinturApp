@@ -11,12 +11,19 @@ pub struct ProjectState {
     pub orbit_yaw: f32,
     pub orbit_pitch: f32,
     pub orbit_distance: f32,
-    pub brush_radius_px: f32,
+    #[serde(default = "default_brush_size_px", alias = "brush_radius_px")]
+    pub brush_size_px: f32,
+    #[serde(default = "default_brush_strength")]
+    pub brush_strength: f32,
     pub brush_color_rgba: [u8; 4],
     #[serde(default = "default_brush_blend_mode")]
     pub brush_blend_mode: BrushBlendMode,
     #[serde(default = "default_use_tablet_pressure")]
     pub use_tablet_pressure: bool,
+    #[serde(default = "default_use_pressure_for_size")]
+    pub use_pressure_for_size: bool,
+    #[serde(default = "default_use_pressure_for_strength")]
+    pub use_pressure_for_strength: bool,
     #[serde(default = "default_seam_padding_iterations")]
     pub seam_padding_iterations: usize,
 }
@@ -29,7 +36,23 @@ fn default_brush_blend_mode() -> BrushBlendMode {
     BrushBlendMode::Normal
 }
 
+fn default_brush_size_px() -> f32 {
+    24.0
+}
+
+fn default_brush_strength() -> f32 {
+    1.0
+}
+
 fn default_use_tablet_pressure() -> bool {
+    true
+}
+
+fn default_use_pressure_for_size() -> bool {
+    true
+}
+
+fn default_use_pressure_for_strength() -> bool {
     true
 }
 

@@ -19,10 +19,13 @@ impl PinturappUi {
             orbit_yaw: self.orbit_yaw,
             orbit_pitch: self.orbit_pitch,
             orbit_distance: self.orbit_distance,
-            brush_radius_px: self.brush_radius_px,
+            brush_size_px: self.brush_size_px,
+            brush_strength: self.brush_strength,
             brush_color_rgba: self.brush_color.to_array(),
             brush_blend_mode: self.brush_blend_mode,
             use_tablet_pressure: self.use_tablet_pressure,
+            use_pressure_for_size: self.use_pressure_for_size,
+            use_pressure_for_strength: self.use_pressure_for_strength,
             seam_padding_iterations: self.paint_pipeline_config.padding_iterations,
         }
     }
@@ -31,7 +34,8 @@ impl PinturappUi {
         self.orbit_yaw = state.orbit_yaw;
         self.orbit_pitch = state.orbit_pitch;
         self.orbit_distance = state.orbit_distance;
-        self.brush_radius_px = state.brush_radius_px.clamp(1.0, 64.0);
+        self.brush_size_px = state.brush_size_px.clamp(1.0, 128.0);
+        self.brush_strength = state.brush_strength.clamp(0.0, 1.0);
         self.brush_color = egui::Color32::from_rgba_unmultiplied(
             state.brush_color_rgba[0],
             state.brush_color_rgba[1],
@@ -40,6 +44,8 @@ impl PinturappUi {
         );
         self.brush_blend_mode = state.brush_blend_mode;
         self.use_tablet_pressure = state.use_tablet_pressure;
+        self.use_pressure_for_size = state.use_pressure_for_size;
+        self.use_pressure_for_strength = state.use_pressure_for_strength;
         self.paint_pipeline_config.padding_iterations = state.seam_padding_iterations.clamp(0, 8);
 
         self.loaded_mesh = None;
@@ -159,8 +165,13 @@ impl PinturappUi {
         self.mesh_center = Vec3::ZERO;
         self.mesh_fit_scale = 1.0;
         self.paint_pipeline_config = Default::default();
+        self.brush_size_px = 24.0;
+        self.brush_strength = 1.0;
+        self.brush_color = egui::Color32::from_rgba_unmultiplied(255, 90, 90, 255);
         self.brush_blend_mode = Default::default();
         self.use_tablet_pressure = true;
+        self.use_pressure_for_size = true;
+        self.use_pressure_for_strength = true;
         self.tablet_pressure_detected = false;
         self.last_brush_pressure = 1.0;
         self.display_brush_pressure = 1.0;

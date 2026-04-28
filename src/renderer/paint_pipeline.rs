@@ -99,6 +99,7 @@ impl Default for BrushBlendMode {
 pub struct BrushDispatch {
     pub screen_pos: [f32; 2],
     pub radius_px: f32,
+    pub strength: f32,
     pub color: [u8; 4],
     pub pressure: f32,
     pub blend_mode: BrushBlendMode,
@@ -106,7 +107,10 @@ pub struct BrushDispatch {
 
 impl BrushDispatch {
     pub fn resolved_color(self) -> [u8; 4] {
-        let alpha = (self.color[3] as f32 * self.pressure.clamp(0.0, 1.0)).round() as u8;
+        let alpha = (self.color[3] as f32
+            * self.strength.clamp(0.0, 1.0)
+            * self.pressure.clamp(0.0, 1.0))
+        .round() as u8;
         [self.color[0], self.color[1], self.color[2], alpha]
     }
 }
