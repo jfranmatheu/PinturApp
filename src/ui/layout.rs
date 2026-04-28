@@ -58,26 +58,29 @@ impl PinturappUi {
                             .unwrap_or_else(|| "Texture loaded".to_string())
                     })
                     .unwrap_or_else(|| "No texture".to_string());
-                ui.label(format!(
-                    "Project: {}",
-                    self.current_project_path
-                        .as_ref()
-                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                        .unwrap_or_else(|| "Untitled".to_string())
-                ));
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Project: {}",
+                        self.current_project_path
+                            .as_ref()
+                            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                            .unwrap_or_else(|| "Untitled".to_string())
+                    ))
+                    .color(egui::Color32::from_rgb(208, 216, 232)),
+                );
                 ui.separator();
-                ui.label(format!("Mesh: {mesh_status}"));
+                ui.small(format!("Mesh: {mesh_status}"));
                 ui.separator();
-                ui.label(format!("Texture: {texture_status}"));
+                ui.small(format!("Texture: {texture_status}"));
                 ui.separator();
                 let dirty_label = if self.is_dirty {
                     "State: Unsaved changes"
                 } else {
                     "State: Saved"
                 };
-                ui.label(dirty_label);
+                ui.small(dirty_label);
                 ui.separator();
-                ui.label(format!("Autosave: {}", self.autosave_status_text()));
+                ui.small(format!("Autosave: {}", self.autosave_status_text()));
                 ui.separator();
                 let pressure_mode = if self.use_tablet_pressure {
                     #[cfg(target_os = "windows")]
@@ -115,7 +118,7 @@ impl PinturappUi {
                 } else {
                     "fixed".to_string()
                 };
-                ui.label(format!("Pressure: {:.2} ({pressure_mode})", self.display_brush_pressure));
+                ui.small(format!("Pressure: {:.2} ({pressure_mode})", self.display_brush_pressure));
             });
         });
     }
@@ -125,10 +128,8 @@ impl PinturappUi {
             .resizable(true)
             .default_size(220.0)
             .show_inside(ui, |ui| {
-                ui.heading("Layers");
+                ui.heading("Tool Settings");
                 ui.separator();
-                self.show_viewport_controls_card(ui);
-                ui.add_space(8.0);
                 self.show_material_card(ui);
                 ui.add_space(8.0);
                 self.show_brush_card(ui);
@@ -141,7 +142,13 @@ impl PinturappUi {
 
     pub(crate) fn show_viewport_panel(&mut self, ui: &mut egui::Ui) {
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.heading("3D Viewport");
+            ui.horizontal(|ui| {
+                ui.heading("3D Viewport");
+                ui.separator();
+                ui.small("LMB Paint");
+                ui.small("RMB Orbit");
+                ui.small("Wheel Zoom");
+            });
             if let Some(mesh) = self.loaded_mesh.clone() {
                 self.show_mesh_details(ui, &mesh);
                 ui.separator();
@@ -150,39 +157,32 @@ impl PinturappUi {
                 let (response, painter) = ui.allocate_painter(viewport_size, egui::Sense::drag());
                 let rect = response.rect;
 
-                painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(26, 29, 35));
+                self.draw_viewport_backdrop(&painter, rect, response.hovered());
                 self.handle_camera_input(ui, &response);
                 let img_w = rect.width().max(1.0).round() as usize;
                 let img_h = rect.height().max(1.0).round() as usize;
                 self.draw_viewport_texture_and_wireframe(ui, &painter, rect, &mesh, [img_w, img_h]);
                 self.handle_paint_input(ui, &response, rect, &mesh);
+                self.draw_viewport_overlay(ui, &painter, rect);
             } else {
                 self.is_painting_stroke = false;
                 self.preview_pick_buffer = None;
-                ui.label("No mesh loaded yet. Use 'Load OBJ' to import a model with UVs.");
+                Self::panel_card().show(ui, |ui| {
+                    ui.label("No mesh loaded yet.");
+                    ui.small("Use 'Load OBJ' to import a model with UVs.");
+                });
             }
             self.show_viewport_footer(ui);
         });
     }
 
     fn show_mesh_details(&self, ui: &mut egui::Ui, mesh: &crate::io::mesh_loader::MeshData) {
-        ui.label(format!("Loaded: {}", mesh.source_path.display()));
-        ui.label(format!("Vertices: {}", mesh.vertices.len()));
-        ui.label(format!("Triangles: {}", mesh.indices.len() / 3));
-        if let Some(v0) = mesh.vertices.first() {
-            ui.label(format!(
-                "Sample Vertex: pos=({:.3}, {:.3}, {:.3}) uv=({:.3}, {:.3})",
-                v0.position[0], v0.position[1], v0.position[2], v0.uv[0], v0.uv[1]
-            ));
-        }
-    }
-
-    fn show_viewport_controls_card(&self, ui: &mut egui::Ui) {
-        Self::panel_card().show(ui, |ui| {
-            ui.strong("Viewport Controls");
-            ui.small("LMB Drag: Paint");
-            ui.small("RMB Drag: Orbit");
-            ui.small("Scroll: Zoom");
+        ui.horizontal_wrapped(|ui| {
+            ui.small(format!("Mesh: {}", mesh.source_path.display()));
+            ui.separator();
+            ui.small(format!("Vertices: {}", mesh.vertices.len()));
+            ui.separator();
+            ui.small(format!("Triangles: {}", mesh.indices.len() / 3));
         });
     }
 
@@ -408,12 +408,112 @@ impl PinturappUi {
     }
 
     fn show_viewport_footer(&self, ui: &mut egui::Ui) {
-        if let Some(path) = &self.last_loaded_path {
-            ui.label(format!("Last file: {}", path.display()));
-        }
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            if let Some(path) = &self.last_loaded_path {
+                ui.small(format!("Last file: {}", path.display()));
+            }
+            if let Some(err) = &self.last_error {
+                ui.colored_label(egui::Color32::RED, format!("Load error: {err}"));
+            }
+        });
+    }
 
-        if let Some(err) = &self.last_error {
-            ui.colored_label(egui::Color32::RED, format!("Load error: {err}"));
-        }
+    fn draw_viewport_backdrop(&self, painter: &egui::Painter, rect: egui::Rect, hovered: bool) {
+        let base = egui::Color32::from_rgb(32, 34, 40);
+        let tint = if hovered {
+            egui::Color32::from_rgba_unmultiplied(119, 156, 224, 24)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 0)
+        };
+        painter.rect_filled(rect, 8.0, base);
+        painter.rect_filled(rect, 8.0, tint);
+        let border_color = if hovered {
+            egui::Color32::from_rgb(106, 141, 206)
+        } else {
+            egui::Color32::from_rgb(66, 72, 86)
+        };
+        painter.rect_stroke(
+            rect,
+            8.0,
+            egui::Stroke::new(1.0, border_color),
+            egui::StrokeKind::Outside,
+        );
+        painter.rect_stroke(
+            rect.shrink(1.0),
+            7.0,
+            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 20)),
+            egui::StrokeKind::Outside,
+        );
+    }
+
+    fn draw_viewport_overlay(&self, ui: &egui::Ui, painter: &egui::Painter, rect: egui::Rect) {
+        let center = rect.center();
+        let crosshair = 6.0;
+        painter.line_segment(
+            [
+                egui::pos2(center.x - crosshair, center.y),
+                egui::pos2(center.x + crosshair, center.y),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(230, 235, 245, 120)),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(center.x, center.y - crosshair),
+                egui::pos2(center.x, center.y + crosshair),
+            ],
+            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(230, 235, 245, 120)),
+        );
+
+        let corner = 16.0;
+        let corner_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(210, 220, 240, 70));
+        painter.line_segment(
+            [rect.left_top(), egui::pos2(rect.left() + corner, rect.top())],
+            corner_stroke,
+        );
+        painter.line_segment(
+            [rect.left_top(), egui::pos2(rect.left(), rect.top() + corner)],
+            corner_stroke,
+        );
+        painter.line_segment(
+            [rect.right_top(), egui::pos2(rect.right() - corner, rect.top())],
+            corner_stroke,
+        );
+        painter.line_segment(
+            [rect.right_top(), egui::pos2(rect.right(), rect.top() + corner)],
+            corner_stroke,
+        );
+        painter.line_segment(
+            [rect.left_bottom(), egui::pos2(rect.left() + corner, rect.bottom())],
+            corner_stroke,
+        );
+        painter.line_segment(
+            [rect.left_bottom(), egui::pos2(rect.left(), rect.bottom() - corner)],
+            corner_stroke,
+        );
+        painter.line_segment(
+            [rect.right_bottom(), egui::pos2(rect.right() - corner, rect.bottom())],
+            corner_stroke,
+        );
+        painter.line_segment(
+            [rect.right_bottom(), egui::pos2(rect.right(), rect.bottom() - corner)],
+            corner_stroke,
+        );
+
+        let pressure_mode = if self.use_tablet_pressure { "tablet" } else { "fixed" };
+        let overlay = format!(
+            "R {:.0}px  P {:.2} ({})  Z {:.2}",
+            self.brush_radius_px,
+            self.display_brush_pressure,
+            pressure_mode,
+            self.orbit_distance
+        );
+        painter.text(
+            rect.left_top() + egui::vec2(10.0, 10.0),
+            egui::Align2::LEFT_TOP,
+            overlay,
+            egui::TextStyle::Small.resolve(ui.style()),
+            egui::Color32::from_rgb(230, 236, 245),
+        );
     }
 }

@@ -6,7 +6,7 @@ impl PinturappUi {
     pub(crate) fn show_toolbar_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.strong("Pinturapp");
+                ui.label(egui::RichText::new("Pinturapp").strong().color(egui::Color32::from_rgb(218, 224, 236)));
                 ui.separator();
                 ui.menu_button("File", |ui| {
                     if ui.button("New Project    Ctrl+N").clicked() {
@@ -89,16 +89,16 @@ impl PinturappUi {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if self.is_dirty {
-                        ui.colored_label(egui::Color32::from_rgb(255, 200, 80), "Unsaved changes");
+                        ui.colored_label(egui::Color32::from_rgb(255, 178, 85), "Unsaved changes");
                     }
                     if let Some(path) = &self.current_project_path {
                         let name = path
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "Untitled".to_string());
-                        ui.label(name);
+                        ui.label(egui::RichText::new(name).color(egui::Color32::from_rgb(206, 213, 226)));
                     } else {
-                        ui.label("Untitled project");
+                        ui.label(egui::RichText::new("Untitled project").color(egui::Color32::from_rgb(170, 178, 194)));
                     }
                 });
             });

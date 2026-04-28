@@ -5,10 +5,10 @@ use eframe::egui::{self, ColorImage, TextureOptions};
 impl PinturappUi {
     pub(crate) fn panel_card() -> egui::Frame {
         egui::Frame::default()
-            .fill(egui::Color32::from_rgb(24, 30, 40))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(45, 58, 78)))
-            .corner_radius(egui::CornerRadius::same(8))
-            .inner_margin(egui::Margin::same(10))
+            .fill(egui::Color32::from_rgb(32, 35, 41))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(58, 62, 74)))
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::same(12))
     }
 
     pub(crate) fn apply_modern_theme(&mut self, ctx: &egui::Context) {
@@ -17,15 +17,30 @@ impl PinturappUi {
         }
         ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*ctx.global_style()).clone();
-        style.spacing.item_spacing = egui::vec2(10.0, 10.0);
-        style.spacing.button_padding = egui::vec2(12.0, 8.0);
-        style.visuals.panel_fill = egui::Color32::from_rgb(18, 22, 30);
-        style.visuals.faint_bg_color = egui::Color32::from_rgb(28, 34, 44);
-        style.visuals.extreme_bg_color = egui::Color32::from_rgb(10, 13, 19);
-        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(34, 42, 54);
-        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(45, 56, 72);
-        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(58, 74, 98);
-        style.visuals.selection.bg_fill = egui::Color32::from_rgb(66, 100, 160);
+        style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+        style.spacing.button_padding = egui::vec2(10.0, 6.0);
+        style.visuals.panel_fill = egui::Color32::from_rgb(36, 39, 46);
+        style.visuals.window_fill = egui::Color32::from_rgb(42, 45, 52);
+        style.visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(68, 72, 84));
+        style.visuals.faint_bg_color = egui::Color32::from_rgb(47, 51, 60);
+        style.visuals.extreme_bg_color = egui::Color32::from_rgb(24, 26, 31);
+        style.visuals.code_bg_color = egui::Color32::from_rgb(30, 33, 38);
+        style.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(39, 42, 49);
+        style.visuals.widgets.noninteractive.fg_stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(176, 183, 198));
+        style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(54, 58, 68);
+        style.visuals.widgets.inactive.fg_stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(194, 199, 210));
+        style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(67, 76, 96);
+        style.visuals.widgets.hovered.bg_stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(118, 150, 214));
+        style.visuals.widgets.hovered.fg_stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(228, 232, 242));
+        style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(80, 95, 128);
+        style.visuals.widgets.active.bg_stroke =
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(131, 169, 238));
+        style.visuals.selection.bg_fill = egui::Color32::from_rgb(79, 124, 205);
+        style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(222, 230, 244));
         ctx.set_global_style(style);
         self.theme_applied = true;
     }
