@@ -2,7 +2,7 @@ pub mod paint_pipeline;
 pub mod preview;
 
 pub use paint_pipeline::{
-    BrushBlendMode, BrushDispatch, BrushInput, PaintPipelineConfig, UvCoverageCache,
+    BrushBlendMode, BrushDispatch, BrushFalloff, BrushInput, PaintPipelineConfig, UvCoverageCache,
     paint_projected_brush_into,
 };
 pub use preview::{

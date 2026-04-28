@@ -1,6 +1,6 @@
 use crate::PinturappUi;
 use crate::renderer::{
-    BrushBlendMode, BrushDispatch, BrushInput, draw_mesh_wireframe, render_preview_frame,
+    BrushBlendMode, BrushDispatch, BrushFalloff, BrushInput, draw_mesh_wireframe, render_preview_frame,
     sample_surface_from_buffer,
 };
 use eframe::egui;
@@ -22,6 +22,17 @@ impl PinturappUi {
 
     fn quantize_pressure(value: f32) -> f32 {
         ((value.clamp(0.0, 1.0) * 100.0).round() / 100.0).clamp(0.0, 1.0)
+    }
+
+    fn falloff_label(mode: BrushFalloff) -> &'static str {
+        match mode {
+            BrushFalloff::Smooth => "Smooth",
+            BrushFalloff::Sphere => "Sphere",
+            BrushFalloff::Root => "Root",
+            BrushFalloff::Sharp => "Sharp",
+            BrushFalloff::Linear => "Linear",
+            BrushFalloff::Constant => "Constant",
+        }
     }
 
     fn current_brush_pressure(ui: &egui::Ui) -> Option<f32> {
@@ -330,6 +341,16 @@ impl PinturappUi {
                 self.is_dirty = true;
             }
 
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.brush_sample_distance_px, 0.5..=64.0)
+                        .text("Sample Distance"),
+                )
+                .changed()
+            {
+                self.is_dirty = true;
+            }
+
             ui.horizontal_wrapped(|ui| {
                 ui.small("Blend");
                 if ui
@@ -349,6 +370,25 @@ impl PinturappUi {
                     .changed()
                 {
                     self.is_dirty = true;
+                }
+            });
+
+            ui.horizontal_wrapped(|ui| {
+                ui.small("Falloff");
+                for mode in [
+                    BrushFalloff::Smooth,
+                    BrushFalloff::Sphere,
+                    BrushFalloff::Root,
+                    BrushFalloff::Sharp,
+                    BrushFalloff::Linear,
+                    BrushFalloff::Constant,
+                ] {
+                    if ui
+                        .selectable_value(&mut self.brush_falloff, mode, Self::falloff_label(mode))
+                        .changed()
+                    {
+                        self.is_dirty = true;
+                    }
                 }
             });
 
@@ -468,6 +508,7 @@ impl PinturappUi {
             && is_primary_down;
         if secondary_activity {
             self.is_painting_stroke = false;
+            self.last_paint_sample_screen_pos = None;
         }
         let sampled_pressure = Self::current_brush_pressure(ui).map(Self::quantize_pressure);
         if self.use_tablet_pressure {
@@ -483,6 +524,7 @@ impl PinturappUi {
             self.is_painting_stroke = true;
         } else if !is_painting_now {
             self.is_painting_stroke = false;
+            self.last_paint_sample_screen_pos = None;
         }
         self.display_brush_pressure = self.last_brush_pressure;
 
@@ -490,9 +532,18 @@ impl PinturappUi {
             if let Some(pointer_pos) = ui.ctx().input(|i| i.pointer.interact_pos()) {
                 if !rect.contains(pointer_pos) {
                     self.is_painting_stroke = false;
+                    self.last_paint_sample_screen_pos = None;
                 }
                 let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
                 let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);
+                if let Some(prev) = self.last_paint_sample_screen_pos {
+                    let dx = sx - prev[0];
+                    let dy = sy - prev[1];
+                    let min_dist = self.brush_sample_distance_px.max(0.5);
+                    if dx * dx + dy * dy < min_dist * min_dist {
+                        return;
+                    }
+                }
                 if let Some(pick) = &self.preview_pick_buffer
                 {
                     let pick_w = pick.size[0].max(1) as f32;
@@ -526,8 +577,10 @@ impl PinturappUi {
                             color: self.brush_color.to_array(),
                             pressure: pressure_for_strength,
                             blend_mode: self.brush_blend_mode,
+                            falloff: self.brush_falloff,
                         },
                     );
+                    self.last_paint_sample_screen_pos = Some([sx, sy]);
                     ui.ctx().request_repaint();
                 }
                 }

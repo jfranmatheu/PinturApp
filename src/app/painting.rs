@@ -17,6 +17,7 @@ impl PinturappUi {
 
     pub(crate) fn begin_paint_stroke(&mut self) {
         self.ensure_albedo_texture();
+        self.last_paint_sample_screen_pos = None;
         if let Some(texture) = &self.albedo_texture {
             self.undo_stack.push_back(texture.clone());
             if self.undo_stack.len() > Self::MAX_HISTORY {

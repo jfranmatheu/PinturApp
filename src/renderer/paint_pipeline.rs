@@ -95,6 +95,23 @@ impl Default for BrushBlendMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BrushFalloff {
+    Smooth,
+    Sphere,
+    Root,
+    Sharp,
+    Linear,
+    Constant,
+}
+
+impl Default for BrushFalloff {
+    fn default() -> Self {
+        Self::Smooth
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct BrushDispatch {
     pub screen_pos: [f32; 2],
@@ -103,6 +120,7 @@ pub struct BrushDispatch {
     pub color: [u8; 4],
     pub pressure: f32,
     pub blend_mode: BrushBlendMode,
+    pub falloff: BrushFalloff,
 }
 
 impl BrushDispatch {
@@ -132,7 +150,9 @@ pub fn paint_projected_brush_into(
     let Some(world_radius) = hit_brush_radius(mesh, input.hit, w, h, dispatch.radius_px) else {
         return false;
     };
-    let Some(mask) = build_projected_brush_mask(mesh, input.center_world, world_radius, w, h) else {
+    let Some(mask) =
+        build_projected_brush_mask(mesh, input.center_world, world_radius, dispatch.falloff, w, h)
+    else {
         return false;
     };
 
@@ -194,6 +214,7 @@ pub fn build_projected_brush_mask(
     mesh: &MeshData,
     center_pos: Vec3,
     world_radius: f32,
+    falloff_mode: BrushFalloff,
     tex_w: usize,
     tex_h: usize,
 ) -> Option<BrushMask> {
@@ -267,7 +288,8 @@ pub fn build_projected_brush_mask(
                 }
 
                 let dist = dist_sq.sqrt();
-                let falloff = (1.0 - dist / world_radius).clamp(0.0, 1.0);
+                let normalized = (1.0 - dist / world_radius).clamp(0.0, 1.0);
+                let falloff = apply_falloff_curve(normalized, falloff_mode);
                 if falloff <= 0.0 {
                     continue;
                 }
@@ -279,6 +301,25 @@ pub fn build_projected_brush_mask(
     }
 
     if mask.is_empty() { None } else { Some(mask) }
+}
+
+fn apply_falloff_curve(t: f32, mode: BrushFalloff) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    match mode {
+        // Matches Blender-like smoothstep behavior.
+        BrushFalloff::Smooth => t * t * (3.0 - 2.0 * t),
+        BrushFalloff::Sphere => (1.0 - (1.0 - t) * (1.0 - t)).sqrt(),
+        BrushFalloff::Root => t.sqrt(),
+        BrushFalloff::Sharp => t * t,
+        BrushFalloff::Linear => t,
+        BrushFalloff::Constant => {
+            if t > 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    }
 }
 
 pub fn apply_brush_mask(

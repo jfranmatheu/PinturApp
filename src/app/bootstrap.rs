@@ -1,6 +1,6 @@
 use crate::PinturappUi;
 use crate::app::{default_storage_dir, load_recent_projects};
-use crate::renderer::BrushBlendMode;
+use crate::renderer::{BrushBlendMode, BrushFalloff};
 use eframe::egui;
 use glam::Vec3;
 use std::collections::VecDeque;
@@ -36,6 +36,8 @@ impl Default for PinturappUi {
             brush_strength: 1.0,
             brush_color: egui::Color32::from_rgba_unmultiplied(255, 90, 90, 255),
             brush_blend_mode: BrushBlendMode::Normal,
+            brush_falloff: BrushFalloff::Smooth,
+            brush_sample_distance_px: 2.0,
             use_tablet_pressure: true,
             use_pressure_for_size: true,
             use_pressure_for_strength: true,
@@ -45,6 +47,7 @@ impl Default for PinturappUi {
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
             is_painting_stroke: false,
+            last_paint_sample_screen_pos: None,
             current_project_path: None,
             recent_projects,
             storage_dir,

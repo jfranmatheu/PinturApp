@@ -23,6 +23,8 @@ impl PinturappUi {
             brush_strength: self.brush_strength,
             brush_color_rgba: self.brush_color.to_array(),
             brush_blend_mode: self.brush_blend_mode,
+            brush_falloff: self.brush_falloff,
+            brush_sample_distance_px: self.brush_sample_distance_px,
             use_tablet_pressure: self.use_tablet_pressure,
             use_pressure_for_size: self.use_pressure_for_size,
             use_pressure_for_strength: self.use_pressure_for_strength,
@@ -43,6 +45,8 @@ impl PinturappUi {
             state.brush_color_rgba[3],
         );
         self.brush_blend_mode = state.brush_blend_mode;
+        self.brush_falloff = state.brush_falloff;
+        self.brush_sample_distance_px = state.brush_sample_distance_px.clamp(0.5, 64.0);
         self.use_tablet_pressure = state.use_tablet_pressure;
         self.use_pressure_for_size = state.use_pressure_for_size;
         self.use_pressure_for_strength = state.use_pressure_for_strength;
@@ -54,6 +58,7 @@ impl PinturappUi {
         self.albedo_texture = None;
         self.uv_coverage_cache = None;
         self.viewport_needs_refresh = true;
+        self.last_paint_sample_screen_pos = None;
 
         if let Some(mesh_entry) = state.mesh_entry {
             let path = base_dir.join(mesh_entry);
@@ -174,6 +179,8 @@ impl PinturappUi {
         self.brush_strength = 1.0;
         self.brush_color = egui::Color32::from_rgba_unmultiplied(255, 90, 90, 255);
         self.brush_blend_mode = Default::default();
+        self.brush_falloff = Default::default();
+        self.brush_sample_distance_px = 2.0;
         self.use_tablet_pressure = true;
         self.use_pressure_for_size = true;
         self.use_pressure_for_strength = true;
@@ -181,6 +188,7 @@ impl PinturappUi {
         self.last_brush_pressure = 1.0;
         self.display_brush_pressure = 1.0;
         self.is_painting_stroke = false;
+        self.last_paint_sample_screen_pos = None;
         self.current_project_path = None;
         self.clear_history();
         self.is_dirty = false;

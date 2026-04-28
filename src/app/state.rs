@@ -1,4 +1,4 @@
-use crate::renderer::BrushBlendMode;
+use crate::renderer::{BrushBlendMode, BrushFalloff};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,6 +18,10 @@ pub struct ProjectState {
     pub brush_color_rgba: [u8; 4],
     #[serde(default = "default_brush_blend_mode")]
     pub brush_blend_mode: BrushBlendMode,
+    #[serde(default = "default_brush_falloff")]
+    pub brush_falloff: BrushFalloff,
+    #[serde(default = "default_brush_sample_distance_px")]
+    pub brush_sample_distance_px: f32,
     #[serde(default = "default_use_tablet_pressure")]
     pub use_tablet_pressure: bool,
     #[serde(default = "default_use_pressure_for_size")]
@@ -34,6 +38,14 @@ fn default_seam_padding_iterations() -> usize {
 
 fn default_brush_blend_mode() -> BrushBlendMode {
     BrushBlendMode::Normal
+}
+
+fn default_brush_falloff() -> BrushFalloff {
+    BrushFalloff::Smooth
+}
+
+fn default_brush_sample_distance_px() -> f32 {
+    2.0
 }
 
 fn default_brush_size_px() -> f32 {
