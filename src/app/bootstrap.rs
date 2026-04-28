@@ -33,6 +33,7 @@ impl Default for PinturappUi {
             brush_color: egui::Color32::from_rgba_unmultiplied(255, 90, 90, 255),
             brush_blend_mode: BrushBlendMode::Normal,
             use_tablet_pressure: true,
+            last_brush_pressure: 1.0,
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
             is_painting_stroke: false,

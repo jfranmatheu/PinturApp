@@ -33,6 +33,7 @@ struct PinturappUi {
     brush_color: egui::Color32,
     brush_blend_mode: BrushBlendMode,
     use_tablet_pressure: bool,
+    last_brush_pressure: f32,
     undo_stack: VecDeque<RgbaImage>,
     redo_stack: VecDeque<RgbaImage>,
     is_painting_stroke: bool,

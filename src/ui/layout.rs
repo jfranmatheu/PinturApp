@@ -66,6 +66,13 @@ impl PinturappUi {
                 ui.label(dirty_label);
                 ui.separator();
                 ui.label(format!("Autosave: {}", self.autosave_status_text()));
+                ui.separator();
+                let pressure_mode = if self.use_tablet_pressure {
+                    "tablet"
+                } else {
+                    "fixed"
+                };
+                ui.label(format!("Pressure: {:.2} ({pressure_mode})", self.last_brush_pressure));
             });
         });
     }
@@ -248,6 +255,12 @@ impl PinturappUi {
             && ui
                 .ctx()
                 .input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+        let sampled_pressure = Self::current_brush_pressure(ui);
+        self.last_brush_pressure = if self.use_tablet_pressure {
+            sampled_pressure
+        } else {
+            1.0
+        };
         if is_painting_now && !self.is_painting_stroke {
             self.begin_paint_stroke();
             self.is_painting_stroke = true;
@@ -265,11 +278,6 @@ impl PinturappUi {
                 if let Some(pick) = &self.preview_pick_buffer
                     && let Some(sample) = sample_surface_from_buffer(mesh, pick, [sx, sy])
                 {
-                    let pressure = if self.use_tablet_pressure {
-                        Self::current_brush_pressure(ui)
-                    } else {
-                        1.0
-                    };
                     self.paint_projected_brush(
                         mesh,
                         BrushInput {
@@ -281,7 +289,7 @@ impl PinturappUi {
                             screen_pos: [sx, sy],
                             radius_px: self.brush_radius_px,
                             color: self.brush_color.to_array(),
-                            pressure,
+                            pressure: self.last_brush_pressure,
                             blend_mode: self.brush_blend_mode,
                         },
                     );
