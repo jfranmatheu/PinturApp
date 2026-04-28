@@ -28,6 +28,8 @@ struct PinturappUi {
     albedo_texture: Option<RgbaImage>,
     preview_texture: Option<TextureHandle>,
     preview_pick_buffer: Option<ScreenPickBuffer>,
+    viewport_frame_size: [usize; 2],
+    viewport_needs_refresh: bool,
     paint_pipeline_config: PaintPipelineConfig,
     uv_coverage_cache: Option<UvCoverageCache>,
     brush_size_px: f32,

@@ -41,6 +41,7 @@ impl PinturappUi {
         }
         self.albedo_texture = Some(previous);
         self.is_dirty = true;
+        self.viewport_needs_refresh = true;
     }
 
     pub(crate) fn redo_paint(&mut self) {
@@ -57,6 +58,7 @@ impl PinturappUi {
         }
         self.albedo_texture = Some(next);
         self.is_dirty = true;
+        self.viewport_needs_refresh = true;
     }
 
     pub(crate) fn paint_projected_brush(
@@ -78,6 +80,7 @@ impl PinturappUi {
             &self.paint_pipeline_config,
         ) {
             self.is_dirty = true;
+            self.viewport_needs_refresh = true;
         }
     }
 }

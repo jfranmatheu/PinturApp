@@ -121,27 +121,7 @@ impl PinturappUi {
                     if has_pressure_signal {
                         "tablet".to_string()
                     } else {
-                        #[cfg(target_os = "windows")]
-                        {
-                            let (
-                                hook_attempts,
-                                hook_successes,
-                                any_msgs,
-                                pointer_msgs,
-                                pressure_samples,
-                                pointer_type,
-                            ) =
-                                crate::platform::windows_pen::debug_snapshot();
-                            let (wt_attempts, wt_successes, wt_polls, wt_packets, wt_contact_packets, _) =
-                                crate::platform::windows_wintab::debug_snapshot();
-                            format!(
-                                "tablet/no-signal (ink hook:{hook_successes}/{hook_attempts} any:{any_msgs} wm_ptr:{pointer_msgs} samples:{pressure_samples} type:{pointer_type} | wintab init:{wt_successes}/{wt_attempts} polls:{wt_polls} packets:{wt_packets} contact:{wt_contact_packets})"
-                            )
-                        }
-                        #[cfg(not(target_os = "windows"))]
-                        {
-                            "tablet/no-signal".to_string()
-                        }
+                        "tablet/no-signal".to_string()
                     }
                 } else {
                     "fixed".to_string()
@@ -221,7 +201,11 @@ impl PinturappUi {
                 });
             });
             ui.separator();
-            if let Some(mesh) = self.loaded_mesh.clone() {
+            if self.loaded_mesh.is_some() {
+                let mesh = self
+                    .loaded_mesh
+                    .take()
+                    .expect("loaded_mesh checked as Some above");
                 self.show_mesh_details(ui, &mesh);
                 ui.separator();
                 let available = ui.available_size_before_wrap();
@@ -236,9 +220,12 @@ impl PinturappUi {
                 self.draw_viewport_texture_and_wireframe(ui, &painter, rect, &mesh, [img_w, img_h]);
                 self.handle_paint_input(ui, &response, rect, &mesh);
                 self.draw_viewport_overlay(ui, &painter, rect);
+                self.loaded_mesh = Some(mesh);
             } else {
                 self.is_painting_stroke = false;
                 self.preview_pick_buffer = None;
+                self.viewport_frame_size = [0, 0];
+                self.viewport_needs_refresh = true;
                 Self::panel_card().show(ui, |ui| {
                     ui.label("No mesh loaded yet.");
                     ui.small("Use 'Load OBJ' to import a model with UVs.");
@@ -422,6 +409,7 @@ impl PinturappUi {
             self.orbit_yaw += delta.x * 0.01;
             self.orbit_pitch = (self.orbit_pitch + delta.y * 0.01).clamp(-1.4, 1.4);
             self.is_dirty = true;
+            self.viewport_needs_refresh = true;
         }
 
         if response.hovered() {
@@ -430,6 +418,7 @@ impl PinturappUi {
                 let zoom_factor = (1.0_f32 - scroll * 0.0015_f32).clamp(0.80_f32, 1.25_f32);
                 self.orbit_distance = (self.orbit_distance * zoom_factor).clamp(0.25, 50.0);
                 self.is_dirty = true;
+                self.viewport_needs_refresh = true;
             }
         }
     }
@@ -525,18 +514,26 @@ impl PinturappUi {
         mesh: &crate::io::mesh_loader::MeshData,
         image_size: [usize; 2],
     ) {
-        let frame = render_preview_frame(
-            mesh,
-            self.mesh_center,
-            self.mesh_fit_scale,
-            self.orbit_yaw,
-            self.orbit_pitch,
-            self.orbit_distance,
-            image_size,
-            self.albedo_texture.as_ref(),
-        );
-        self.preview_pick_buffer = Some(frame.pick);
-        self.update_preview_texture(ui.ctx(), frame.image);
+        let should_render = self.preview_texture.is_none()
+            || self.preview_pick_buffer.is_none()
+            || self.viewport_frame_size != image_size
+            || self.viewport_needs_refresh;
+        if should_render {
+            let frame = render_preview_frame(
+                mesh,
+                self.mesh_center,
+                self.mesh_fit_scale,
+                self.orbit_yaw,
+                self.orbit_pitch,
+                self.orbit_distance,
+                image_size,
+                self.albedo_texture.as_ref(),
+            );
+            self.preview_pick_buffer = Some(frame.pick);
+            self.update_preview_texture(ui.ctx(), frame.image);
+            self.viewport_frame_size = image_size;
+            self.viewport_needs_refresh = false;
+        }
         if let Some(texture) = &self.preview_texture {
             painter.image(
                 texture.id(),
