@@ -68,6 +68,7 @@ impl eframe::App for PinturappUi {
         self.show_toolbar_panel(ui);
         self.show_status_bar_panel(ui);
         self.show_left_panel(ui);
+        self.show_right_panel(ui);
         self.show_viewport_panel(ui);
         self.show_welcome_overlay_if_needed(ui.ctx());
         self.show_discard_confirm_dialog(ui.ctx());

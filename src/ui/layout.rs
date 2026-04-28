@@ -167,17 +167,27 @@ impl PinturappUi {
             )
             .show_inside(ui, |ui| {
                 Self::section_header(ui, "TOOL SETTINGS");
-                self.show_material_card(ui);
-                ui.add_space(6.0);
                 self.show_brush_card(ui);
                 ui.add_space(6.0);
                 self.show_color_card(ui);
                 ui.add_space(6.0);
                 self.show_pipeline_card(ui);
-                if let Some(path) = &self.current_project_path {
-                    ui.add_space(6.0);
-                    self.show_project_card(ui, path);
-                }
+            });
+    }
+
+    pub(crate) fn show_right_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::right("material_panel")
+            .resizable(true)
+            .default_size(220.0)
+            .frame(
+                egui::Frame::default()
+                    .fill(egui::Color32::from_rgb(39, 42, 49))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 78, 90)))
+                    .inner_margin(egui::Margin::same(8)),
+            )
+            .show_inside(ui, |ui| {
+                Self::section_header(ui, "MATERIAL SETTINGS");
+                self.show_material_card(ui);
             });
     }
 
@@ -200,6 +210,15 @@ impl PinturappUi {
                 ui.small("[LMB] Paint");
                 ui.small("[RMB] Orbit");
                 ui.small("[WHEEL] Zoom");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.small(format!("U:{}  R:{}", self.undo_stack.len(), self.redo_stack.len()));
+                    if ui.button("Redo").clicked() {
+                        self.redo_paint();
+                    }
+                    if ui.button("Undo").clicked() {
+                        self.undo_paint();
+                    }
+                });
             });
             ui.separator();
             if let Some(mesh) = self.loaded_mesh.clone() {
@@ -364,20 +383,6 @@ impl PinturappUi {
                 ui.small("Input is quantized to 2 decimals. No temporal smoothing.");
             });
 
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui.button("Undo").clicked() {
-                    self.undo_paint();
-                }
-                if ui.button("Redo").clicked() {
-                    self.redo_paint();
-                }
-                ui.small(format!(
-                    "U:{}  R:{}",
-                    self.undo_stack.len(),
-                    self.redo_stack.len()
-                ));
-            });
         });
     }
 
@@ -407,13 +412,6 @@ impl PinturappUi {
                 self.is_dirty = true;
             }
             ui.small("Higher values pad farther into UV gutter to reduce seam filtering artifacts.");
-        });
-    }
-
-    fn show_project_card(&self, ui: &mut egui::Ui, path: &std::path::Path) {
-        Self::panel_card().show(ui, |ui| {
-            Self::section_header(ui, "PROJECT");
-            ui.small(path.display().to_string());
         });
     }
 
