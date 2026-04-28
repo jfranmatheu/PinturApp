@@ -6,6 +6,24 @@ use crate::renderer::{
 use eframe::egui;
 
 impl PinturappUi {
+    fn current_brush_pressure(ui: &egui::Ui) -> f32 {
+        ui.ctx().input(|i| {
+            i.events
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    egui::Event::Touch { phase, force, .. }
+                        if matches!(phase, egui::TouchPhase::Start | egui::TouchPhase::Move) =>
+                    {
+                        *force
+                    }
+                    _ => None,
+                })
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0)
+        })
+    }
+
     pub(crate) fn show_status_bar_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -241,6 +259,7 @@ impl PinturappUi {
                 if let Some(pick) = &self.preview_pick_buffer
                     && let Some(sample) = sample_surface_from_buffer(mesh, pick, [sx, sy])
                 {
+                    let pressure = Self::current_brush_pressure(ui);
                     self.paint_projected_brush(
                         mesh,
                         BrushInput {
@@ -252,7 +271,7 @@ impl PinturappUi {
                             screen_pos: [sx, sy],
                             radius_px: self.brush_radius_px,
                             color: self.brush_color.to_array(),
-                            pressure: 1.0,
+                            pressure,
                             blend_mode: self.brush_blend_mode,
                         },
                     );
