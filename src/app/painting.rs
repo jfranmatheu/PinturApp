@@ -1,6 +1,6 @@
 use crate::PinturappUi;
 use crate::io::mesh_loader::MeshData;
-use crate::renderer::{SurfaceHit, paint_projected_brush_into};
+use crate::renderer::{BrushInput, paint_projected_brush_into};
 use image::RgbaImage;
 
 impl PinturappUi {
@@ -59,7 +59,7 @@ impl PinturappUi {
         self.is_dirty = true;
     }
 
-    pub(crate) fn paint_projected_brush(&mut self, mesh: &MeshData, hit: SurfaceHit) {
+    pub(crate) fn paint_projected_brush(&mut self, mesh: &MeshData, input: BrushInput) {
         self.ensure_albedo_texture();
         let Some(texture) = self.albedo_texture.as_mut() else {
             return;
@@ -67,7 +67,7 @@ impl PinturappUi {
         if paint_projected_brush_into(
             texture,
             mesh,
-            hit,
+            input,
             self.brush_radius_px,
             self.brush_color.to_array(),
             Some(self.uv_coverage_cache.get_or_insert_with(Default::default)),

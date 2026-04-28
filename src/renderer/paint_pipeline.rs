@@ -73,21 +73,30 @@ impl BrushMask {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BrushInput {
+    pub hit: SurfaceHit,
+    pub center_world: Vec3,
+    pub center_uv: [f32; 2],
+}
+
 pub fn paint_projected_brush_into(
     texture: &mut RgbaImage,
     mesh: &MeshData,
-    hit: SurfaceHit,
+    input: BrushInput,
     brush_radius_px: f32,
     brush_color: [u8; 4],
     uv_coverage_cache: Option<&mut UvCoverageCache>,
     config: &PaintPipelineConfig,
 ) -> bool {
+    let _ = input.hit.bary;
+    let _ = input.center_uv;
     let w = texture.width().max(1) as usize;
     let h = texture.height().max(1) as usize;
-    let Some((center_pos, world_radius)) = hit_brush_center_and_radius(mesh, hit, w, h, brush_radius_px) else {
+    let Some(world_radius) = hit_brush_radius(mesh, input.hit, w, h, brush_radius_px) else {
         return false;
     };
-    let Some(mask) = build_projected_brush_mask(mesh, center_pos, world_radius, w, h) else {
+    let Some(mask) = build_projected_brush_mask(mesh, input.center_world, world_radius, w, h) else {
         return false;
     };
 
@@ -105,13 +114,13 @@ pub fn paint_projected_brush_into(
     painted
 }
 
-pub fn hit_brush_center_and_radius(
+pub fn hit_brush_radius(
     mesh: &MeshData,
     hit: SurfaceHit,
     tex_w: usize,
     tex_h: usize,
     brush_radius_px: f32,
-) -> Option<(Vec3, f32)> {
+) -> Option<f32> {
     let (Some(v0), Some(v1), Some(v2)) = (
         mesh.vertices.get(hit.tri[0] as usize),
         mesh.vertices.get(hit.tri[1] as usize),
@@ -122,7 +131,6 @@ pub fn hit_brush_center_and_radius(
     let p0 = vec3(v0.position[0], v0.position[1], v0.position[2]);
     let p1 = vec3(v1.position[0], v1.position[1], v1.position[2]);
     let p2 = vec3(v2.position[0], v2.position[1], v2.position[2]);
-    let center_pos = p0 * hit.bary[0] + p1 * hit.bary[1] + p2 * hit.bary[2];
 
     let uv0 = Vec2::new(
         v0.uv[0] * (tex_w.saturating_sub(1) as f32),
@@ -142,8 +150,7 @@ pub fn hit_brush_center_and_radius(
         return None;
     }
     let world_per_texel = (area_obj / area_tex).sqrt();
-    let world_radius = (brush_radius_px.max(1.0) * world_per_texel).max(1e-5);
-    Some((center_pos, world_radius))
+    Some((brush_radius_px.max(1.0) * world_per_texel).max(1e-5))
 }
 
 pub fn build_projected_brush_mask(

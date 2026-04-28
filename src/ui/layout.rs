@@ -1,5 +1,5 @@
 use crate::PinturappUi;
-use crate::renderer::{draw_mesh_wireframe, pick_surface_hit_from_buffer, render_preview_frame};
+use crate::renderer::{BrushInput, draw_mesh_wireframe, render_preview_frame, sample_surface_from_buffer};
 use eframe::egui;
 
 impl PinturappUi {
@@ -206,9 +206,16 @@ impl PinturappUi {
                 let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
                 let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);
                 if let Some(pick) = &self.preview_pick_buffer
-                    && let Some(hit) = pick_surface_hit_from_buffer(mesh, pick, [sx, sy])
+                    && let Some(sample) = sample_surface_from_buffer(mesh, pick, [sx, sy])
                 {
-                    self.paint_projected_brush(mesh, hit);
+                    self.paint_projected_brush(
+                        mesh,
+                        BrushInput {
+                            hit: sample.hit,
+                            center_world: glam::vec3(sample.world_pos[0], sample.world_pos[1], sample.world_pos[2]),
+                            center_uv: sample.uv,
+                        },
+                    );
                     ui.ctx().request_repaint();
                 }
             }

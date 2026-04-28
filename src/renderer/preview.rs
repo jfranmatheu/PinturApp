@@ -142,18 +142,6 @@ pub fn render_preview_frame(
     }
 }
 
-pub fn pick_surface_hit_from_buffer(
-    mesh: &MeshData,
-    pick: &ScreenPickBuffer,
-    screen: [f32; 2],
-) -> Option<SurfaceHit> {
-    sample_surface_from_buffer(mesh, pick, screen).map(|s| {
-        let _ = s.world_pos;
-        let _ = s.uv;
-        s.hit
-    })
-}
-
 pub fn sample_surface_from_buffer(
     mesh: &MeshData,
     pick: &ScreenPickBuffer,
