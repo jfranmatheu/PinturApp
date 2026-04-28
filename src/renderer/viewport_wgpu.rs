@@ -92,10 +92,16 @@ fn fs_main(in_f: VSOut, @builtin(front_facing) front_facing: bool) -> @location(
         n = -n;
     }
     let view_dir = normalize(camera.camera_pos - in_f.world_pos);
-    let diffuse = env_color(n, albedo.hdri_rotation);
+    let diffuse_env = env_color(n, albedo.hdri_rotation);
+    let diffuse_luma = dot(diffuse_env, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let diffuse = base.rgb * (0.10 + 1.30 * diffuse_luma);
+    let diffuse_tint = base.rgb * diffuse_env * 0.12;
     let refl = reflect(-view_dir, n);
-    let specular = env_color(refl, albedo.hdri_rotation);
-    let lit = base.rgb * (0.12 + 0.88 * diffuse) + specular * 0.16;
+    let spec_env = env_color(refl, albedo.hdri_rotation);
+    let spec_luma = dot(spec_env, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let fresnel = pow(1.0 - max(dot(n, view_dir), 0.0), 5.0);
+    let specular = vec3<f32>(spec_luma * (0.01 + 0.05 * fresnel));
+    let lit = diffuse + diffuse_tint + specular;
     return vec4<f32>(lit, base.a);
 }
 "#;
