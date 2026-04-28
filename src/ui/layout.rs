@@ -199,6 +199,12 @@ impl PinturappUi {
                             self.is_dirty = true;
                         }
                     });
+                if ui
+                    .checkbox(&mut self.use_tablet_pressure, "Use tablet pressure")
+                    .changed()
+                {
+                    self.is_dirty = true;
+                }
                 ui.small("Higher values pad farther into UV gutter to reduce seam filtering artifacts.");
             });
             ui.small(format!("Undo: {}", self.undo_stack.len()));
@@ -259,7 +265,11 @@ impl PinturappUi {
                 if let Some(pick) = &self.preview_pick_buffer
                     && let Some(sample) = sample_surface_from_buffer(mesh, pick, [sx, sy])
                 {
-                    let pressure = Self::current_brush_pressure(ui);
+                    let pressure = if self.use_tablet_pressure {
+                        Self::current_brush_pressure(ui)
+                    } else {
+                        1.0
+                    };
                     self.paint_projected_brush(
                         mesh,
                         BrushInput {

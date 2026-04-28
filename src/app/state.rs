@@ -15,6 +15,8 @@ pub struct ProjectState {
     pub brush_color_rgba: [u8; 4],
     #[serde(default = "default_brush_blend_mode")]
     pub brush_blend_mode: BrushBlendMode,
+    #[serde(default = "default_use_tablet_pressure")]
+    pub use_tablet_pressure: bool,
     #[serde(default = "default_seam_padding_iterations")]
     pub seam_padding_iterations: usize,
 }
@@ -25,6 +27,10 @@ fn default_seam_padding_iterations() -> usize {
 
 fn default_brush_blend_mode() -> BrushBlendMode {
     BrushBlendMode::Normal
+}
+
+fn default_use_tablet_pressure() -> bool {
+    true
 }
 
 #[derive(Debug, Clone)]
