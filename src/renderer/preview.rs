@@ -101,29 +101,39 @@ pub fn pick_paint_uv_targets_at_screen(
     distance: f32,
     size: [usize; 2],
     screen: [f32; 2],
+    sample_radius_px: f32,
 ) -> Vec<[f32; 2]> {
     let mut targets = Vec::new();
     let mut seen: HashSet<(i32, i32)> = HashSet::new();
 
-    // Sample a compact screen-space neighborhood so paint crosses visible seams locally,
-    // while avoiding UV alias projection that can jump to unrelated islands.
-    let sample_offsets: &[(f32, f32)] = &[
-        (0.0, 0.0),
-        (1.0, 0.0),
-        (-1.0, 0.0),
-        (0.0, 1.0),
-        (0.0, -1.0),
-        (1.0, 1.0),
-        (1.0, -1.0),
-        (-1.0, 1.0),
-        (-1.0, -1.0),
-        (2.0, 0.0),
-        (-2.0, 0.0),
-        (0.0, 2.0),
-        (0.0, -2.0),
-    ];
-    for (ox, oy) in sample_offsets {
-        if let Some(uv) = pick_uv_at_screen(mesh, center, fit_scale, yaw, pitch, distance, size, [screen[0] + *ox, screen[1] + *oy]) {
+    let radius = sample_radius_px.max(1.0);
+    let step = (radius / 3.0).max(1.0);
+    let radius_sq = radius * radius;
+    let mut oy = -radius;
+    while oy <= radius + 0.001 {
+        let mut ox = -radius;
+        while ox <= radius + 0.001 {
+            if ox * ox + oy * oy <= radius_sq + 0.25 {
+                if let Some(uv) = pick_uv_at_screen(
+                    mesh,
+                    center,
+                    fit_scale,
+                    yaw,
+                    pitch,
+                    distance,
+                    size,
+                    [screen[0] + ox, screen[1] + oy],
+                ) {
+                    push_unique_uv(&mut targets, &mut seen, uv);
+                }
+            }
+            ox += step;
+        }
+        oy += step;
+    }
+
+    if targets.is_empty() {
+        if let Some(uv) = pick_uv_at_screen(mesh, center, fit_scale, yaw, pitch, distance, size, screen) {
             push_unique_uv(&mut targets, &mut seen, uv);
         }
     }
