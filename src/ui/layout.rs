@@ -24,7 +24,7 @@ impl PinturappUi {
             if let Some(value) = crate::platform::windows_pen::latest_pressure(120) {
                 return Some(value);
             }
-            return crate::platform::windows_wintab::latest_pressure(180);
+            return crate::platform::windows_wintab::latest_pressure(80);
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -91,17 +91,16 @@ impl PinturappUi {
                             let (
                                 hook_attempts,
                                 hook_successes,
-                                pointer_regs,
                                 any_msgs,
                                 pointer_msgs,
                                 pressure_samples,
                                 pointer_type,
                             ) =
                                 crate::platform::windows_pen::debug_snapshot();
-                            let (wt_attempts, wt_successes, wt_polls, wt_packets, _) =
+                            let (wt_attempts, wt_successes, wt_polls, wt_packets, wt_contact_packets, _) =
                                 crate::platform::windows_wintab::debug_snapshot();
                             format!(
-                                "tablet/no-signal (ink hook:{hook_successes}/{hook_attempts} reg:{pointer_regs} any:{any_msgs} wm_ptr:{pointer_msgs} samples:{pressure_samples} type:{pointer_type} | wintab init:{wt_successes}/{wt_attempts} polls:{wt_polls} packets:{wt_packets})"
+                                "tablet/no-signal (ink hook:{hook_successes}/{hook_attempts} any:{any_msgs} wm_ptr:{pointer_msgs} samples:{pressure_samples} type:{pointer_type} | wintab init:{wt_successes}/{wt_attempts} polls:{wt_polls} packets:{wt_packets} contact:{wt_contact_packets})"
                             )
                         }
                         #[cfg(not(target_os = "windows"))]
@@ -279,7 +278,8 @@ impl PinturappUi {
     }
 
     fn handle_camera_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
-        if response.dragged_by(egui::PointerButton::Secondary) {
+        let secondary_down = ui.ctx().input(|i| i.pointer.secondary_down());
+        if response.hovered() && secondary_down {
             let delta = ui.ctx().input(|i| i.pointer.delta());
             self.orbit_yaw += delta.x * 0.01;
             self.orbit_pitch = (self.orbit_pitch + delta.y * 0.01).clamp(-1.4, 1.4);
@@ -303,16 +303,28 @@ impl PinturappUi {
         rect: egui::Rect,
         mesh: &crate::io::mesh_loader::MeshData,
     ) {
+        let (is_secondary_down, secondary_pressed, secondary_released, is_primary_down) = ui.ctx().input(|i| {
+            (
+                i.pointer.button_down(egui::PointerButton::Secondary),
+                i.pointer.button_pressed(egui::PointerButton::Secondary),
+                i.pointer.button_released(egui::PointerButton::Secondary),
+                i.pointer.button_down(egui::PointerButton::Primary),
+            )
+        });
+        let is_navigation_drag = response.dragged_by(egui::PointerButton::Secondary);
+        let secondary_activity = is_navigation_drag || is_secondary_down || secondary_pressed || secondary_released;
         let is_painting_now = response.hovered()
-            && ui
-                .ctx()
-                .input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+            && !secondary_activity
+            && is_primary_down;
+        if secondary_activity {
+            self.is_painting_stroke = false;
+        }
         let sampled_pressure = Self::current_brush_pressure(ui);
         if self.use_tablet_pressure {
             if let Some(pressure) = sampled_pressure {
                 self.last_brush_pressure = pressure;
                 self.tablet_pressure_detected = true;
-            } else if !is_painting_now {
+            } else {
                 self.last_brush_pressure = 1.0;
             }
         } else {

@@ -6,14 +6,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use eframe::Frame;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::UI::Accessibility::RegisterPointerInputTarget;
 use windows_sys::Win32::UI::Input::Pointer::{
-    EnableMouseInPointer, GetPointerPenInfo, GetPointerTouchInfo, GetPointerType, POINTER_PEN_INFO,
-    POINTER_TOUCH_INFO,
+    GetPointerPenInfo, GetPointerTouchInfo, GetPointerType, POINTER_PEN_INFO, POINTER_TOUCH_INFO,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, POINTER_INPUT_TYPE, PT_PEN, PT_TOUCH,
-    SetWindowLongPtrW, WM_POINTERDOWN, WM_POINTERUP, WM_POINTERUPDATE, WNDPROC,
+    CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, POINTER_INPUT_TYPE, PT_PEN, PT_TOUCH, SetWindowLongPtrW,
+    WM_POINTERDOWN, WM_POINTERUP, WM_POINTERUPDATE, WNDPROC,
 };
 
 const NO_PRESSURE_BITS: u32 = u32::MAX;
@@ -25,7 +23,6 @@ static LAST_PRESSURE_TS_MS: AtomicU64 = AtomicU64::new(0);
 static PRESSURE_SIGNAL_DETECTED: AtomicBool = AtomicBool::new(false);
 static HOOK_INSTALL_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static HOOK_INSTALL_SUCCESSES: AtomicU64 = AtomicU64::new(0);
-static POINTER_REGISTRATION_SUCCESSES: AtomicU64 = AtomicU64::new(0);
 static ANY_WINDOW_MESSAGE_COUNT: AtomicU64 = AtomicU64::new(0);
 static POINTER_MESSAGE_COUNT: AtomicU64 = AtomicU64::new(0);
 static PRESSURE_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -42,14 +39,6 @@ pub fn install(frame: &Frame) {
     let hwnd = handle.hwnd.get();
     if hwnd == HOOKED_HWND.load(Ordering::Relaxed) {
         return;
-    }
-
-    // Ask Windows to route mouse/pen through pointer APIs when possible.
-    unsafe { EnableMouseInPointer(1) };
-    let pen_registered = unsafe { RegisterPointerInputTarget(hwnd as HWND, PT_PEN) } != 0;
-    let touch_registered = unsafe { RegisterPointerInputTarget(hwnd as HWND, PT_TOUCH) } != 0;
-    if pen_registered || touch_registered {
-        POINTER_REGISTRATION_SUCCESSES.fetch_add(1, Ordering::Relaxed);
     }
 
     // Install a lightweight WndProc shim to capture WM_POINTER pen pressure.
@@ -84,11 +73,10 @@ pub fn pressure_signal_detected() -> bool {
     PRESSURE_SIGNAL_DETECTED.load(Ordering::Relaxed)
 }
 
-pub fn debug_snapshot() -> (u64, u64, u64, u64, u64, u64, u32) {
+pub fn debug_snapshot() -> (u64, u64, u64, u64, u64, u32) {
     (
         HOOK_INSTALL_ATTEMPTS.load(Ordering::Relaxed),
         HOOK_INSTALL_SUCCESSES.load(Ordering::Relaxed),
-        POINTER_REGISTRATION_SUCCESSES.load(Ordering::Relaxed),
         ANY_WINDOW_MESSAGE_COUNT.load(Ordering::Relaxed),
         POINTER_MESSAGE_COUNT.load(Ordering::Relaxed),
         PRESSURE_SAMPLE_COUNT.load(Ordering::Relaxed),

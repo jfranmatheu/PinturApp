@@ -19,6 +19,7 @@ static INIT_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static INIT_SUCCESSES: AtomicU64 = AtomicU64::new(0);
 static PACKET_POLLS: AtomicU64 = AtomicU64::new(0);
 static PACKETS_READ: AtomicU64 = AtomicU64::new(0);
+static CONTACT_PACKETS_READ: AtomicU64 = AtomicU64::new(0);
 static LAST_HWND: AtomicIsize = AtomicIsize::new(0);
 
 thread_local! {
@@ -71,12 +72,13 @@ pub fn pressure_signal_detected() -> bool {
     PRESSURE_SIGNAL_DETECTED.load(Ordering::Relaxed)
 }
 
-pub fn debug_snapshot() -> (u64, u64, u64, u64, isize) {
+pub fn debug_snapshot() -> (u64, u64, u64, u64, u64, isize) {
     (
         INIT_ATTEMPTS.load(Ordering::Relaxed),
         INIT_SUCCESSES.load(Ordering::Relaxed),
         PACKET_POLLS.load(Ordering::Relaxed),
         PACKETS_READ.load(Ordering::Relaxed),
+        CONTACT_PACKETS_READ.load(Ordering::Relaxed),
         LAST_HWND.load(Ordering::Relaxed),
     )
 }
@@ -156,6 +158,12 @@ impl WintabBackend {
 
         PACKETS_READ.fetch_add(count as u64, Ordering::Relaxed);
         let latest = &packets[(count - 1) as usize];
+        let buttons = unsafe { std::ptr::addr_of!(latest.pkButtons).read_unaligned().0 };
+        // Ignore hover/mouse packets: only trust pressure while pen tip contact is active.
+        if buttons & 0x1 == 0 {
+            return;
+        }
+        CONTACT_PACKETS_READ.fetch_add(1, Ordering::Relaxed);
         let raw = unsafe { std::ptr::addr_of!(latest.pkNormalPressure).read_unaligned() } as i64;
         if let Some(normalized) = normalize_pressure(raw, self.pressure_min, self.pressure_max) {
             LAST_PRESSURE_BITS.store(normalized.to_bits(), Ordering::Relaxed);
