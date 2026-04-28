@@ -163,6 +163,7 @@ impl PinturappUi {
         self.paint_pipeline_config = Default::default();
         self.brush_blend_mode = Default::default();
         self.use_tablet_pressure = true;
+        self.tablet_pressure_detected = false;
         self.pressure_smoothing = 0.25;
         self.last_brush_pressure = 1.0;
         self.display_brush_pressure = 1.0;

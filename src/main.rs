@@ -33,6 +33,7 @@ struct PinturappUi {
     brush_color: egui::Color32,
     brush_blend_mode: BrushBlendMode,
     use_tablet_pressure: bool,
+    tablet_pressure_detected: bool,
     pressure_smoothing: f32,
     last_brush_pressure: f32,
     display_brush_pressure: f32,

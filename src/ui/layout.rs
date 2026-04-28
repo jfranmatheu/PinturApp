@@ -6,7 +6,7 @@ use crate::renderer::{
 use eframe::egui;
 
 impl PinturappUi {
-    fn current_brush_pressure(ui: &egui::Ui) -> f32 {
+    fn current_brush_pressure(ui: &egui::Ui) -> Option<f32> {
         ui.ctx().input(|i| {
             i.events
                 .iter()
@@ -15,12 +15,10 @@ impl PinturappUi {
                     egui::Event::Touch { phase, force, .. }
                         if matches!(phase, egui::TouchPhase::Start | egui::TouchPhase::Move) =>
                     {
-                        *force
+                        force.map(|value| value.clamp(0.0, 1.0))
                     }
                     _ => None,
                 })
-                .unwrap_or(1.0)
-                .clamp(0.0, 1.0)
         })
     }
 
@@ -68,7 +66,11 @@ impl PinturappUi {
                 ui.label(format!("Autosave: {}", self.autosave_status_text()));
                 ui.separator();
                 let pressure_mode = if self.use_tablet_pressure {
-                    "tablet"
+                    if self.tablet_pressure_detected {
+                        "tablet"
+                    } else {
+                        "tablet/no-signal"
+                    }
                 } else {
                     "fixed"
                 };
@@ -210,6 +212,9 @@ impl PinturappUi {
                     .checkbox(&mut self.use_tablet_pressure, "Use tablet pressure")
                     .changed()
                 {
+                    if !self.use_tablet_pressure {
+                        self.tablet_pressure_detected = false;
+                    }
                     self.is_dirty = true;
                 }
                 if ui
@@ -265,16 +270,24 @@ impl PinturappUi {
                 .ctx()
                 .input(|i| i.pointer.button_down(egui::PointerButton::Primary));
         let sampled_pressure = Self::current_brush_pressure(ui);
-        self.last_brush_pressure = if self.use_tablet_pressure {
-            sampled_pressure
+        if self.use_tablet_pressure {
+            if let Some(pressure) = sampled_pressure {
+                self.last_brush_pressure = pressure;
+                self.tablet_pressure_detected = true;
+            } else if !is_painting_now {
+                self.last_brush_pressure = 1.0;
+            }
         } else {
-            1.0
-        };
+            self.last_brush_pressure = 1.0;
+        }
         self.display_brush_pressure +=
             (self.last_brush_pressure - self.display_brush_pressure) * self.pressure_smoothing.clamp(0.0, 1.0);
         if is_painting_now && !self.is_painting_stroke {
             self.begin_paint_stroke();
             self.is_painting_stroke = true;
+            if self.use_tablet_pressure {
+                self.tablet_pressure_detected = sampled_pressure.is_some();
+            }
         } else if !is_painting_now {
             self.is_painting_stroke = false;
         }

@@ -33,6 +33,7 @@ impl Default for PinturappUi {
             brush_color: egui::Color32::from_rgba_unmultiplied(255, 90, 90, 255),
             brush_blend_mode: BrushBlendMode::Normal,
             use_tablet_pressure: true,
+            tablet_pressure_detected: false,
             pressure_smoothing: 0.25,
             last_brush_pressure: 1.0,
             display_brush_pressure: 1.0,
