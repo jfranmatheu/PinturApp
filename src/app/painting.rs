@@ -172,6 +172,7 @@ impl PinturappUi {
 
                 if !pending_stamps.is_empty() {
                     let mut batch_painted = false;
+                    let mut used_gpu_batch = false;
                     if config.use_gpu_compute_experimental {
                         if gpu_session.is_none() {
                             gpu_session =
@@ -183,6 +184,7 @@ impl PinturappUi {
 
                     if let Some(session) = gpu_session.as_mut() {
                         batch_painted = session.apply_stamps(&pending_stamps);
+                        used_gpu_batch = batch_painted;
                     } else {
                         for (input, dispatch) in &pending_stamps {
                             if paint_projected_brush_into(
@@ -198,13 +200,12 @@ impl PinturappUi {
                         }
                     }
                     pending_stamps.clear();
-                    painted_since_preview |= batch_painted;
+                    if !used_gpu_batch {
+                        painted_since_preview |= batch_painted;
+                    }
                 }
 
                 if painted_since_preview && last_preview.elapsed() >= preview_interval {
-                    if let Some(session) = gpu_session.as_mut() {
-                        let _ = session.readback_if_dirty(&mut texture);
-                    }
                     if event_tx.send(PaintWorkerEvent::Preview(texture.clone())).is_err() {
                         return;
                     }

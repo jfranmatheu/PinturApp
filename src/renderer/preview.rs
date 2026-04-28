@@ -3,6 +3,7 @@ use eframe::egui::{self, ColorImage};
 use glam::{Mat4, Vec3, Vec4, vec3};
 use image::RgbaImage;
 use std::collections::HashSet;
+use std::time::Instant;
 
 pub fn compute_mesh_fit(mesh: &MeshData) -> (Vec3, f32) {
     let mut min = vec3(f32::MAX, f32::MAX, f32::MAX);
@@ -73,6 +74,7 @@ pub fn render_preview_frame(
     size: [usize; 2],
     albedo: Option<&RgbaImage>,
 ) -> PreviewFrame {
+    let t0 = Instant::now();
     let width = size[0].max(1);
     let height = size[1].max(1);
     let mut pixels = vec![0_u8; width * height * 4];
@@ -136,10 +138,21 @@ pub fn render_preview_frame(
         );
     }
 
-    PreviewFrame {
+    let frame = PreviewFrame {
         image: ColorImage::from_rgba_unmultiplied([width, height], &pixels),
         pick,
+    };
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    if ms > 16.6 {
+        log::debug!(
+            "preview.render_frame exceeded budget: {:.2}ms ({}x{}, tris={})",
+            ms,
+            width,
+            height,
+            mesh.indices.len() / 3
+        );
     }
+    frame
 }
 
 pub fn sample_surface_from_buffer(

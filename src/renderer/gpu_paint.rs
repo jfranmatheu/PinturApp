@@ -5,6 +5,7 @@ use eframe::wgpu;
 use image::RgbaImage;
 use std::sync::mpsc;
 use std::sync::{Arc, OnceLock};
+use std::time::Instant;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -38,8 +39,19 @@ struct GpuRuntime {
 }
 
 static GPU_RUNTIME: OnceLock<Option<GpuRuntime>> = OnceLock::new();
+static SHARED_GPU_RUNTIME: OnceLock<GpuRuntime> = OnceLock::new();
+
+pub fn install_shared_runtime(device: wgpu::Device, queue: wgpu::Queue) {
+    let _ = SHARED_GPU_RUNTIME.set(GpuRuntime {
+        device: Arc::new(device),
+        queue: Arc::new(queue),
+    });
+}
 
 fn gpu_runtime() -> Option<GpuRuntime> {
+    if let Some(runtime) = SHARED_GPU_RUNTIME.get() {
+        return Some(runtime.clone());
+    }
     GPU_RUNTIME
         .get_or_init(|| {
             let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -432,6 +444,7 @@ impl GpuPaintSession {
     }
 
     pub fn apply_stamps(&mut self, stamps_input: &[(BrushInput, BrushDispatch)]) -> bool {
+        let t0 = Instant::now();
         if stamps_input.is_empty() {
             return false;
         }
@@ -507,10 +520,18 @@ impl GpuPaintSession {
         }
         queue.submit(std::iter::once(encoder.finish()));
         self.dirty_gpu = true;
+        log::debug!(
+            "gpu_paint.apply_stamps stamps={} region={}x{} dispatch_ms={:.3}",
+            stamps_input.len(),
+            region_w,
+            region_h,
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
         true
     }
 
     pub fn readback_if_dirty(&mut self, texture: &mut RgbaImage) -> bool {
+        let t0 = Instant::now();
         if !self.dirty_gpu {
             return false;
         }
@@ -560,6 +581,11 @@ impl GpuPaintSession {
         drop(mapped);
         self.readback_buffer.unmap();
         self.dirty_gpu = false;
+        log::debug!(
+            "gpu_paint.readback pixels={} readback_ms={:.3}",
+            self.pixel_count,
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
         true
     }
 }
