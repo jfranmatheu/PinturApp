@@ -6,6 +6,7 @@ use std::time::Instant;
 
 mod app;
 mod io;
+mod platform;
 mod renderer;
 mod ui;
 
@@ -55,7 +56,11 @@ struct PinturappUi {
 }
 
 impl eframe::App for PinturappUi {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        #[cfg(target_os = "windows")]
+        crate::platform::windows_pen::install(frame);
+        #[cfg(target_os = "windows")]
+        crate::platform::windows_wintab::install(frame);
         self.apply_modern_theme(ui.ctx());
         self.handle_shortcuts(ui.ctx());
         self.show_toolbar_panel(ui);

@@ -7,19 +7,29 @@ use eframe::egui;
 
 impl PinturappUi {
     fn current_brush_pressure(ui: &egui::Ui) -> Option<f32> {
-        ui.ctx().input(|i| {
+        let event_pressure = ui.ctx().input(|i| {
             i.events
                 .iter()
                 .rev()
                 .find_map(|event| match event {
-                    egui::Event::Touch { phase, force, .. }
-                        if matches!(phase, egui::TouchPhase::Start | egui::TouchPhase::Move) =>
-                    {
-                        force.map(|value| value.clamp(0.0, 1.0))
-                    }
+                    egui::Event::Touch { force, .. } => force.map(|value| value.clamp(0.0, 1.0)),
                     _ => None,
                 })
-        })
+        });
+        if event_pressure.is_some() {
+            return event_pressure;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(value) = crate::platform::windows_pen::latest_pressure(120) {
+                return Some(value);
+            }
+            return crate::platform::windows_wintab::latest_pressure(180);
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
     }
 
     pub(crate) fn show_status_bar_panel(&mut self, ui: &mut egui::Ui) {
@@ -66,13 +76,41 @@ impl PinturappUi {
                 ui.label(format!("Autosave: {}", self.autosave_status_text()));
                 ui.separator();
                 let pressure_mode = if self.use_tablet_pressure {
-                    if self.tablet_pressure_detected {
-                        "tablet"
+                    #[cfg(target_os = "windows")]
+                    let has_pressure_signal = self.tablet_pressure_detected
+                        || crate::platform::windows_pen::pressure_signal_detected()
+                        || crate::platform::windows_wintab::pressure_signal_detected();
+                    #[cfg(not(target_os = "windows"))]
+                    let has_pressure_signal = self.tablet_pressure_detected;
+
+                    if has_pressure_signal {
+                        "tablet".to_string()
                     } else {
-                        "tablet/no-signal"
+                        #[cfg(target_os = "windows")]
+                        {
+                            let (
+                                hook_attempts,
+                                hook_successes,
+                                pointer_regs,
+                                any_msgs,
+                                pointer_msgs,
+                                pressure_samples,
+                                pointer_type,
+                            ) =
+                                crate::platform::windows_pen::debug_snapshot();
+                            let (wt_attempts, wt_successes, wt_polls, wt_packets, _) =
+                                crate::platform::windows_wintab::debug_snapshot();
+                            format!(
+                                "tablet/no-signal (ink hook:{hook_successes}/{hook_attempts} reg:{pointer_regs} any:{any_msgs} wm_ptr:{pointer_msgs} samples:{pressure_samples} type:{pointer_type} | wintab init:{wt_successes}/{wt_attempts} polls:{wt_polls} packets:{wt_packets})"
+                            )
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            "tablet/no-signal".to_string()
+                        }
                     }
                 } else {
-                    "fixed"
+                    "fixed".to_string()
                 };
                 ui.label(format!("Pressure: {:.2} ({pressure_mode})", self.display_brush_pressure));
             });
