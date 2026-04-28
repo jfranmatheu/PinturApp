@@ -432,6 +432,44 @@ impl PinturappUi {
             .inner_margin(egui::Margin::same(10))
     }
 
+    fn welcome_surface() -> egui::Frame {
+        egui::Frame::default()
+            .fill(egui::Color32::from_rgb(20, 25, 35))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(58, 74, 98)))
+            .corner_radius(egui::CornerRadius::same(12))
+            .inner_margin(egui::Margin::same(14))
+    }
+
+    fn welcome_action_tile(ui: &mut egui::Ui, title: &str, hint: &str, description: &str) -> bool {
+        let mut clicked = false;
+        Self::panel_card().show(ui, |ui| {
+            if ui
+                .add_sized(
+                    egui::vec2(190.0, 36.0),
+                    egui::Button::new(egui::RichText::new(title).strong()),
+                )
+                .clicked()
+            {
+                clicked = true;
+            }
+            ui.small(description);
+            ui.add_space(2.0);
+            Self::shortcut_chip(ui, hint);
+        });
+        clicked
+    }
+
+    fn shortcut_chip(ui: &mut egui::Ui, text: &str) {
+        egui::Frame::default()
+            .fill(egui::Color32::from_rgb(33, 41, 54))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(54, 70, 92)))
+            .corner_radius(egui::CornerRadius::same(6))
+            .inner_margin(egui::Margin::symmetric(6, 2))
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new(text).monospace().small());
+            });
+    }
+
     fn shorten_path(path: &Path, max_chars: usize) -> String {
         let text = path.display().to_string();
         if text.chars().count() <= max_chars {
@@ -537,32 +575,73 @@ impl PinturappUi {
                     .rect_filled(full_rect, 0.0, egui::Color32::from_black_alpha(170));
 
                 ui.scope_builder(egui::UiBuilder::new().max_rect(panel_rect), |ui| {
-                    Self::panel_card().show(ui, |ui| {
-                        ui.heading("Welcome to Pinturapp");
-                        ui.small("Load a project or start from scratch.");
-                        ui.add_space(8.0);
+                    Self::welcome_surface().show(ui, |ui| {
+                        ui.heading("Pinturapp");
+                        ui.label("Welcome back. Start a new canvas or jump into a recent project.");
+                        ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
-                            if ui.button("New Project").clicked() {
+                            ui.label(egui::RichText::new("Quick Actions").strong());
+                            Self::shortcut_chip(ui, "Ctrl+N");
+                            Self::shortcut_chip(ui, "Ctrl+O");
+                            Self::shortcut_chip(ui, "Ctrl+Shift+O");
+                        });
+                        ui.add_space(10.0);
+                        ui.horizontal_wrapped(|ui| {
+                            if Self::welcome_action_tile(
+                                ui,
+                                "New Project",
+                                "Ctrl+N",
+                                "Start from a clean project state.",
+                            ) {
                                 self.request_load_action(PendingLoadAction::NewProject);
                                 dismiss_overlay = true;
                             }
-                            if ui.button("Load Project...").clicked() {
+                            if Self::welcome_action_tile(
+                                ui,
+                                "Load Project",
+                                "Ctrl+O",
+                                "Open a .pinturaproj bundle.",
+                            ) {
                                 self.request_load_action(PendingLoadAction::OpenProjectPicker);
                                 dismiss_overlay = true;
                             }
-                            if ui.button("Load OBJ...").clicked() {
+                            if Self::welcome_action_tile(
+                                ui,
+                                "Load Autosave",
+                                "Ctrl+Shift+O",
+                                "Recover latest autosaved state.",
+                            ) {
+                                self.request_load_action(PendingLoadAction::LoadAutosave);
+                                dismiss_overlay = true;
+                            }
+                            if Self::welcome_action_tile(
+                                ui,
+                                "Load OBJ",
+                                "File Menu",
+                                "Import geometry into the viewport.",
+                            ) {
                                 self.pick_and_load_obj();
                                 dismiss_overlay = true;
                             }
-                            if ui.button("Load Texture...").clicked() {
+                            if Self::welcome_action_tile(
+                                ui,
+                                "Load Texture",
+                                "File Menu",
+                                "Apply a base texture before painting.",
+                            ) {
                                 self.pick_and_load_texture();
                                 dismiss_overlay = true;
                             }
                         });
-                        ui.add_space(10.0);
+
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.add_space(8.0);
                         ui.strong("Recent Projects");
+                        ui.small("You can also open these from File > Recent Projects.");
                         let recent = self.recent_projects.clone();
                         if recent.is_empty() {
+                            ui.add_space(4.0);
                             ui.small("No recent projects yet.");
                         } else {
                             for (idx, path) in recent.iter().take(8).enumerate() {
@@ -581,7 +660,7 @@ impl PinturappUi {
                                         }
                                     });
                                     ui.strong(label);
-                                    ui.small(Self::shorten_path(path, 86));
+                                    ui.small(Self::shorten_path(path, 96));
                                 });
                                 ui.add_space(6.0);
                             }
