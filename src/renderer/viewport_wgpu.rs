@@ -4,6 +4,7 @@ use bytemuck::{Pod, Zeroable};
 use eframe::egui;
 use eframe::wgpu;
 use glam::{Mat4, Vec3, vec3};
+use half::f16;
 use image::io::Reader as ImageReader;
 use std::path::Path;
 use std::sync::Arc;
@@ -74,6 +75,49 @@ fn env_color(dir_in: vec3<f32>, angle: f32) -> vec3<f32> {
     return textureSampleLevel(hdri_tex, hdri_sampler, uv, 0.0).rgb;
 }
 
+fn env_irradiance(n_in: vec3<f32>, angle: f32) -> vec3<f32> {
+    let n = normalize(n_in);
+    var up = vec3<f32>(0.0, 1.0, 0.0);
+    if abs(n.y) > 0.999 {
+        up = vec3<f32>(1.0, 0.0, 0.0);
+    }
+    let t = normalize(cross(up, n));
+    let b = normalize(cross(n, t));
+
+    let d0 = n;
+    let d1 = normalize(n + 0.65 * t);
+    let d2 = normalize(n - 0.65 * t);
+    let d3 = normalize(n + 0.65 * b);
+    let d4 = normalize(n - 0.65 * b);
+    let d5 = normalize(n + 0.45 * t + 0.45 * b);
+    let d6 = normalize(n - 0.45 * t + 0.45 * b);
+    let d7 = normalize(n + 0.45 * t - 0.45 * b);
+    let d8 = normalize(n - 0.45 * t - 0.45 * b);
+
+    let w0 = 0.24;
+    let w1 = 0.12;
+    let w2 = 0.12;
+    let w3 = 0.12;
+    let w4 = 0.12;
+    let w5 = 0.07;
+    let w6 = 0.07;
+    let w7 = 0.07;
+    let w8 = 0.07;
+
+    let c0 = env_color(d0, angle) * max(dot(n, d0), 0.0) * w0;
+    let c1 = env_color(d1, angle) * max(dot(n, d1), 0.0) * w1;
+    let c2 = env_color(d2, angle) * max(dot(n, d2), 0.0) * w2;
+    let c3 = env_color(d3, angle) * max(dot(n, d3), 0.0) * w3;
+    let c4 = env_color(d4, angle) * max(dot(n, d4), 0.0) * w4;
+    let c5 = env_color(d5, angle) * max(dot(n, d5), 0.0) * w5;
+    let c6 = env_color(d6, angle) * max(dot(n, d6), 0.0) * w6;
+    let c7 = env_color(d7, angle) * max(dot(n, d7), 0.0) * w7;
+    let c8 = env_color(d8, angle) * max(dot(n, d8), 0.0) * w8;
+
+    let sum_w = w0 + w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8;
+    return (c0 + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8) / max(sum_w, 1e-5);
+}
+
 @fragment
 fn fs_main(in_f: VSOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     let w = max(u32(albedo.tex_size.x), 1u);
@@ -91,18 +135,10 @@ fn fs_main(in_f: VSOut, @builtin(front_facing) front_facing: bool) -> @location(
     if !front_facing {
         n = -n;
     }
-    let view_dir = normalize(camera.camera_pos - in_f.world_pos);
-    let diffuse_env = env_color(n, albedo.hdri_rotation);
-    let diffuse_luma = dot(diffuse_env, vec3<f32>(0.2126, 0.7152, 0.0722));
-    let diffuse = base.rgb * (0.10 + 1.30 * diffuse_luma);
-    let diffuse_tint = base.rgb * diffuse_env * 0.12;
-    let refl = reflect(-view_dir, n);
-    let spec_env = env_color(refl, albedo.hdri_rotation);
-    let spec_luma = dot(spec_env, vec3<f32>(0.2126, 0.7152, 0.0722));
-    let fresnel = pow(1.0 - max(dot(n, view_dir), 0.0), 5.0);
-    let specular = vec3<f32>(spec_luma * (0.01 + 0.05 * fresnel));
-    let lit = diffuse + diffuse_tint + specular;
-    return vec4<f32>(lit, base.a);
+    let irradiance = env_irradiance(n, albedo.hdri_rotation);
+    let lit_linear = base.rgb * (vec3<f32>(0.03) + irradiance * 1.15);
+    let mapped = lit_linear / (vec3<f32>(1.0) + lit_linear);
+    return vec4<f32>(mapped, base.a);
 }
 "#;
 
@@ -171,7 +207,7 @@ struct Prepared {
 pub struct HdriMap {
     pub width: u32,
     pub height: u32,
-    pub rgba8: Arc<Vec<u8>>,
+    pub rgba16f: Arc<Vec<u16>>,
 }
 
 struct ViewportCallback {
@@ -329,7 +365,7 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -341,10 +377,10 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            self.hdri_map.rgba8.as_slice(),
+            bytemuck::cast_slice(self.hdri_map.rgba16f.as_slice()),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(self.hdri_map.width.max(1) * 4),
+                bytes_per_row: Some(self.hdri_map.width.max(1) * 8),
                 rows_per_image: Some(self.hdri_map.height.max(1)),
             },
             wgpu::Extent3d {
@@ -658,19 +694,16 @@ pub fn load_hdri_map(path: &Path) -> Result<HdriMap, String> {
         .decode()
         .map_err(|err| format!("Failed to decode HDRI '{}': {err}", path.display()))?;
     let rgb32 = decoded.to_rgb32f();
-    let mut rgba8 = Vec::with_capacity((rgb32.width() as usize) * (rgb32.height() as usize) * 4);
+    let mut rgba16f = Vec::with_capacity((rgb32.width() as usize) * (rgb32.height() as usize) * 4);
     for px in rgb32.pixels() {
-        let r = (px[0].max(0.0) / (1.0 + px[0].max(0.0))).powf(1.0 / 2.2);
-        let g = (px[1].max(0.0) / (1.0 + px[1].max(0.0))).powf(1.0 / 2.2);
-        let b = (px[2].max(0.0) / (1.0 + px[2].max(0.0))).powf(1.0 / 2.2);
-        rgba8.push((r * 255.0).clamp(0.0, 255.0) as u8);
-        rgba8.push((g * 255.0).clamp(0.0, 255.0) as u8);
-        rgba8.push((b * 255.0).clamp(0.0, 255.0) as u8);
-        rgba8.push(255);
+        rgba16f.push(f16::from_f32(px[0].max(0.0)).to_bits());
+        rgba16f.push(f16::from_f32(px[1].max(0.0)).to_bits());
+        rgba16f.push(f16::from_f32(px[2].max(0.0)).to_bits());
+        rgba16f.push(f16::from_f32(1.0).to_bits());
     }
     Ok(HdriMap {
         width: rgb32.width().max(1),
         height: rgb32.height().max(1),
-        rgba8: Arc::new(rgba8),
+        rgba16f: Arc::new(rgba16f),
     })
 }
