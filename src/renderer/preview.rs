@@ -32,6 +32,8 @@ pub struct ScreenPickBuffer {
     pub size: [usize; 2],
     tri_ids: Vec<u32>,
     bary: Vec<[f32; 3]>,
+    world_pos: Vec<[f32; 3]>,
+    uv: Vec<[f32; 2]>,
 }
 
 impl ScreenPickBuffer {
@@ -43,8 +45,17 @@ impl ScreenPickBuffer {
             size: [width, height],
             tri_ids: vec![u32::MAX; len],
             bary: vec![[0.0, 0.0, 0.0]; len],
+            world_pos: vec![[0.0, 0.0, 0.0]; len],
+            uv: vec![[0.0, 0.0]; len],
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SurfaceSample {
+    pub hit: SurfaceHit,
+    pub world_pos: [f32; 3],
+    pub uv: [f32; 2],
 }
 
 pub struct PreviewFrame {
@@ -116,7 +127,11 @@ pub fn render_preview_frame(
             &mut pick,
             tri_id as u32,
             [width, height],
-            [(p0.0, p0.1, p0.2, v0.uv), (p1.0, p1.1, p1.2, v1.uv), (p2.0, p2.1, p2.2, v2.uv)],
+            [
+                (p0.0, p0.1, p0.2, v0.position, v0.uv),
+                (p1.0, p1.1, p1.2, v1.position, v1.uv),
+                (p2.0, p2.1, p2.2, v2.position, v2.uv),
+            ],
             albedo,
         );
     }
@@ -132,6 +147,18 @@ pub fn pick_surface_hit_from_buffer(
     pick: &ScreenPickBuffer,
     screen: [f32; 2],
 ) -> Option<SurfaceHit> {
+    sample_surface_from_buffer(mesh, pick, screen).map(|s| {
+        let _ = s.world_pos;
+        let _ = s.uv;
+        s.hit
+    })
+}
+
+pub fn sample_surface_from_buffer(
+    mesh: &MeshData,
+    pick: &ScreenPickBuffer,
+    screen: [f32; 2],
+) -> Option<SurfaceSample> {
     let width = pick.size[0];
     let height = pick.size[1];
     let x = screen[0].round() as i32;
@@ -148,9 +175,13 @@ pub fn pick_surface_hit_from_buffer(
     if i + 2 >= mesh.indices.len() {
         return None;
     }
-    Some(SurfaceHit {
-        tri: [mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]],
-        bary: pick.bary[idx],
+    Some(SurfaceSample {
+        hit: SurfaceHit {
+            tri: [mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]],
+            bary: pick.bary[idx],
+        },
+        world_pos: pick.world_pos[idx],
+        uv: pick.uv[idx],
     })
 }
 
@@ -230,14 +261,14 @@ fn rasterize_triangle(
     pick: &mut ScreenPickBuffer,
     tri_id: u32,
     size: [usize; 2],
-    tri: [(f32, f32, f32, [f32; 2]); 3],
+    tri: [(f32, f32, f32, [f32; 3], [f32; 2]); 3],
     albedo: Option<&RgbaImage>,
 ) {
     let width = size[0];
     let height = size[1];
-    let (x0, y0, z0, uv0) = tri[0];
-    let (x1, y1, z1, uv1) = tri[1];
-    let (x2, y2, z2, uv2) = tri[2];
+    let (x0, y0, z0, pos0, uv0) = tri[0];
+    let (x1, y1, z1, pos1, uv1) = tri[1];
+    let (x2, y2, z2, pos2, uv2) = tri[2];
 
     let area = edge_fn(x0, y0, x1, y1, x2, y2);
     if area.abs() < 1e-6 {
@@ -269,9 +300,18 @@ fn rasterize_triangle(
             depth[idx] = z;
             pick.tri_ids[idx] = tri_id;
             pick.bary[idx] = [w0, w1, w2];
+            pick.world_pos[idx] = [
+                w0 * pos0[0] + w1 * pos1[0] + w2 * pos2[0],
+                w0 * pos0[1] + w1 * pos1[1] + w2 * pos2[1],
+                w0 * pos0[2] + w1 * pos1[2] + w2 * pos2[2],
+            ];
+            pick.uv[idx] = [
+                w0 * uv0[0] + w1 * uv1[0] + w2 * uv2[0],
+                w0 * uv0[1] + w1 * uv1[1] + w2 * uv2[1],
+            ];
 
-            let u = w0 * uv0[0] + w1 * uv1[0] + w2 * uv2[0];
-            let v = w0 * uv0[1] + w1 * uv1[1] + w2 * uv2[1];
+            let u = pick.uv[idx][0];
+            let v = pick.uv[idx][1];
             let mut color = if let Some(tex) = albedo {
                 sample_texture(tex, u, v)
             } else {
