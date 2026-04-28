@@ -13,7 +13,8 @@ struct Camera {
 
 struct AlbedoParams {
     tex_size: vec2<f32>,
-    _pad: vec2<f32>,
+    lighting_enabled: f32,
+    _pad: f32,
 };
 
 struct VSIn {
@@ -24,6 +25,7 @@ struct VSIn {
 struct VSOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) world_pos: vec3<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -43,11 +45,12 @@ fn vs_main(v: VSIn) -> VSOut {
     var out: VSOut;
     out.pos = camera.mvp * vec4<f32>(v.pos, 1.0);
     out.uv = v.uv;
+    out.world_pos = v.pos;
     return out;
 }
 
 @fragment
-fn fs_main(in_f: VSOut) -> @location(0) vec4<f32> {
+fn fs_main(in_f: VSOut, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     let w = max(u32(albedo.tex_size.x), 1u);
     let h = max(u32(albedo.tex_size.y), 1u);
     let u = clamp(in_f.uv.x, 0.0, 1.0);
@@ -55,7 +58,18 @@ fn fs_main(in_f: VSOut) -> @location(0) vec4<f32> {
     let x = min(u32(u * f32(w - 1u)), w - 1u);
     let y = min(u32(v * f32(h - 1u)), h - 1u);
     let idx = y * w + x;
-    return unpack_rgba8(pixels[idx]);
+    let base = unpack_rgba8(pixels[idx]);
+    if albedo.lighting_enabled < 0.5 {
+        return base;
+    }
+    var n = normalize(cross(dpdx(in_f.world_pos), dpdy(in_f.world_pos)));
+    if !front_facing {
+        n = -n;
+    }
+    let light_dir = normalize(vec3<f32>(0.55, 0.75, 0.35));
+    let lambert = max(dot(n, light_dir), 0.0);
+    let shade = 0.22 + 0.78 * lambert;
+    return vec4<f32>(base.rgb * shade, base.a);
 }
 "#;
 
@@ -78,7 +92,7 @@ fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
     );
     let xy = p[vid];
     out.pos = vec4<f32>(xy, 0.0, 1.0);
-    out.uv = xy * 0.5 + vec2<f32>(0.5, 0.5);
+    out.uv = vec2<f32>(xy.x * 0.5 + 0.5, 1.0 - (xy.y * 0.5 + 0.5));
     return out;
 }
 
@@ -105,7 +119,8 @@ struct CameraUniform {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct AlbedoParams {
     tex_size: [f32; 2],
-    _pad: [f32; 2],
+    lighting_enabled: f32,
+    _pad: f32,
 }
 
 struct Prepared {
@@ -121,6 +136,7 @@ struct ViewportCallback {
     snapshot: GpuAlbedoSnapshot,
     camera: CameraUniform,
     target_format: wgpu::TextureFormat,
+    lighting_enabled: bool,
     viewport_points: [f32; 2],
     prepared: Mutex<Option<Prepared>>,
 }
@@ -233,7 +249,8 @@ impl egui_wgpu::CallbackTrait for ViewportCallback {
         });
         let albedo_params = AlbedoParams {
             tex_size: [self.snapshot.width as f32, self.snapshot.height as f32],
-            _pad: [0.0, 0.0],
+            lighting_enabled: if self.lighting_enabled { 1.0 } else { 0.0 },
+            _pad: 0.0,
         };
         let albedo_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pinturapp-viewport-albedo-params-buffer"),
@@ -473,6 +490,7 @@ pub fn enqueue_gpu_viewport(
     distance: f32,
     snapshot: &GpuAlbedoSnapshot,
     target_format: wgpu::TextureFormat,
+    lighting_enabled: bool,
 ) -> bool {
     if mesh.indices.is_empty() || mesh.vertices.is_empty() {
         return false;
@@ -494,6 +512,7 @@ pub fn enqueue_gpu_viewport(
         snapshot: snapshot.clone(),
         camera: CameraUniform { mvp },
         target_format,
+        lighting_enabled,
         viewport_points: [rect.width(), rect.height()],
         prepared: Mutex::new(None),
     };

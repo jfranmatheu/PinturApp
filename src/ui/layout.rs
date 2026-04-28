@@ -218,7 +218,10 @@ impl PinturappUi {
                 ui.small("[WHEEL] Zoom");
                 ui.separator();
                 ui.menu_button("[D] Display", |ui| {
-                    ui.label("Shading: Solid");
+                    ui.label(if self.show_lighting { "Shading: Lit" } else { "Shading: Flat" });
+                    if ui.checkbox(&mut self.show_lighting, "Lighting").changed() {
+                        self.viewport_needs_refresh = true;
+                    }
                     if ui
                         .checkbox(&mut self.show_wireframe_overlay, "Wireframe Overlay")
                         .changed()
@@ -676,6 +679,7 @@ impl PinturappUi {
                     self.orbit_distance,
                     snapshot,
                     target_format,
+                    self.show_lighting,
                 ) {
                     ui.ctx().request_repaint();
                 }

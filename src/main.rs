@@ -49,6 +49,7 @@ struct PinturappUi {
     viewport_frame_size: [usize; 2],
     viewport_needs_refresh: bool,
     show_wireframe_overlay: bool,
+    show_lighting: bool,
     paint_pipeline_config: PaintPipelineConfig,
     uv_coverage_cache: Option<UvCoverageCache>,
     brush_size_px: f32,
