@@ -245,37 +245,36 @@ impl PinturappUi {
                 ui.small("[RMB] Orbit");
                 ui.small("[WHEEL] Zoom");
                 ui.separator();
-                ui.menu_button("[D] Display", |ui| {
-                    ui.label(if self.show_lighting { "Shading: HDRI" } else { "Shading: Flat" });
-                    if ui.checkbox(&mut self.show_lighting, "HDRI Lighting").changed() {
-                        self.viewport_needs_refresh = true;
-                    }
-                    let mut changed_hdri = None;
-                    egui::ComboBox::from_label("HDRI")
-                        .selected_text(self.current_hdri_label())
-                        .show_ui(ui, |ui| {
-                            for (idx, path) in self.hdri_options.iter().enumerate() {
-                                let label = path
-                                    .file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("Unnamed");
-                                if ui.selectable_label(idx == self.selected_hdri_index, label).clicked() {
-                                    changed_hdri = Some(idx);
-                                }
+                ui.label(if self.show_lighting { "Shading: HDRI" } else { "Shading: Flat" });
+                if ui.checkbox(&mut self.show_lighting, "HDRI Lighting").changed() {
+                    self.viewport_needs_refresh = true;
+                }
+                let mut changed_hdri = None;
+                egui::ComboBox::from_id_salt("viewport_hdri_select")
+                    .selected_text(self.current_hdri_label())
+                    .show_ui(ui, |ui| {
+                        for (idx, path) in self.hdri_options.iter().enumerate() {
+                            let label = path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or("Unnamed");
+                            if ui.selectable_label(idx == self.selected_hdri_index, label).clicked() {
+                                changed_hdri = Some(idx);
                             }
-                        });
-                    if let Some(idx) = changed_hdri {
-                        self.set_hdri_selection(idx);
-                    }
-                    ui.small("Rotate: Ctrl+Shift+MouseMove");
-                    ui.small(format!("Rotation: {:.1} deg", self.hdri_rotation.to_degrees()));
-                    if ui
-                        .checkbox(&mut self.show_wireframe_overlay, "Wireframe Overlay")
-                        .changed()
-                    {
-                        self.is_dirty = true;
-                    }
-                });
+                        }
+                    });
+                if let Some(idx) = changed_hdri {
+                    self.set_hdri_selection(idx);
+                }
+                if ui
+                    .checkbox(&mut self.show_wireframe_overlay, "Wireframe Overlay")
+                    .changed()
+                {
+                    self.is_dirty = true;
+                }
+                ui.separator();
+                ui.small("Rotate: Ctrl+Shift+MouseMove");
+                ui.small(format!("HDRI: {:.1} deg", self.hdri_rotation.to_degrees()));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.small(format!("U:{}  R:{}", self.undo_stack.len(), self.redo_stack.len()));
                     if ui.button("Redo").clicked() {
