@@ -36,8 +36,29 @@ impl PinturappUi {
         }
     }
 
+    fn section_header(ui: &mut egui::Ui, label: &str) {
+        ui.label(
+            egui::RichText::new(label)
+                .monospace()
+                .size(10.5)
+                .color(egui::Color32::from_rgb(162, 173, 194)),
+        );
+        ui.add_space(1.0);
+        ui.separator();
+    }
+
+    fn status_chip(ui: &mut egui::Ui, tag: &str, value: impl Into<String>) {
+        ui.label(
+            egui::RichText::new(format!("[{tag}] {}", value.into()))
+                .monospace()
+                .size(10.5)
+                .color(egui::Color32::from_rgb(198, 206, 222)),
+        );
+    }
+
     pub(crate) fn show_status_bar_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
             ui.horizontal_wrapped(|ui| {
                 let mesh_status = self
                     .loaded_mesh
@@ -58,29 +79,27 @@ impl PinturappUi {
                             .unwrap_or_else(|| "Texture loaded".to_string())
                     })
                     .unwrap_or_else(|| "No texture".to_string());
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Project: {}",
-                        self.current_project_path
-                            .as_ref()
-                            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                            .unwrap_or_else(|| "Untitled".to_string())
-                    ))
-                    .color(egui::Color32::from_rgb(208, 216, 232)),
+                Self::status_chip(
+                    ui,
+                    "PRJ",
+                    self.current_project_path
+                        .as_ref()
+                        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                        .unwrap_or_else(|| "Untitled".to_string()),
                 );
                 ui.separator();
-                ui.small(format!("Mesh: {mesh_status}"));
+                Self::status_chip(ui, "MSH", mesh_status);
                 ui.separator();
-                ui.small(format!("Texture: {texture_status}"));
+                Self::status_chip(ui, "TEX", texture_status);
                 ui.separator();
                 let dirty_label = if self.is_dirty {
-                    "State: Unsaved changes"
+                    "Dirty"
                 } else {
-                    "State: Saved"
+                    "Saved"
                 };
-                ui.small(dirty_label);
+                Self::status_chip(ui, "STS", dirty_label);
                 ui.separator();
-                ui.small(format!("Autosave: {}", self.autosave_status_text()));
+                Self::status_chip(ui, "ASV", self.autosave_status_text());
                 ui.separator();
                 let pressure_mode = if self.use_tablet_pressure {
                     #[cfg(target_os = "windows")]
@@ -118,7 +137,11 @@ impl PinturappUi {
                 } else {
                     "fixed".to_string()
                 };
-                ui.small(format!("Pressure: {:.2} ({pressure_mode})", self.display_brush_pressure));
+                Self::status_chip(
+                    ui,
+                    "PRS",
+                    format!("{:.2} ({pressure_mode})", self.display_brush_pressure),
+                );
             });
         });
     }
@@ -127,28 +150,45 @@ impl PinturappUi {
         egui::Panel::left("layers")
             .resizable(true)
             .default_size(220.0)
+            .frame(
+                egui::Frame::default()
+                    .fill(egui::Color32::from_rgb(39, 42, 49))
+                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 78, 90)))
+                    .inner_margin(egui::Margin::same(8)),
+            )
             .show_inside(ui, |ui| {
-                ui.heading("Tool Settings");
-                ui.separator();
+                Self::section_header(ui, "TOOL SETTINGS");
                 self.show_material_card(ui);
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 self.show_brush_card(ui);
                 if let Some(path) = &self.current_project_path {
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
                     self.show_project_card(ui, path);
                 }
             });
     }
 
     pub(crate) fn show_viewport_panel(&mut self, ui: &mut egui::Ui) {
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::default()
+                    .fill(egui::Color32::from_rgb(31, 34, 40))
+                    .inner_margin(egui::Margin::same(8)),
+            )
+            .show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("3D Viewport");
+                ui.label(
+                    egui::RichText::new("VIEWPORT")
+                        .monospace()
+                        .size(10.5)
+                        .color(egui::Color32::from_rgb(167, 178, 198)),
+                );
                 ui.separator();
-                ui.small("LMB Paint");
-                ui.small("RMB Orbit");
-                ui.small("Wheel Zoom");
+                ui.small("[LMB] Paint");
+                ui.small("[RMB] Orbit");
+                ui.small("[WHEEL] Zoom");
             });
+            ui.separator();
             if let Some(mesh) = self.loaded_mesh.clone() {
                 self.show_mesh_details(ui, &mesh);
                 ui.separator();
@@ -188,7 +228,7 @@ impl PinturappUi {
 
     fn show_material_card(&self, ui: &mut egui::Ui) {
         Self::panel_card().show(ui, |ui| {
-            ui.strong("Material");
+            Self::section_header(ui, "MATERIAL");
             if let Some(path) = &self.loaded_texture_path {
                 ui.small(format!("Texture: {}", path.display()));
             } else {
@@ -199,7 +239,7 @@ impl PinturappUi {
 
     fn show_brush_card(&mut self, ui: &mut egui::Ui) {
         Self::panel_card().show(ui, |ui| {
-            ui.strong("Brush");
+            Self::section_header(ui, "BRUSH");
             if ui
                 .add(egui::Slider::new(&mut self.brush_radius_px, 1.0..=64.0).text("Radius"))
                 .changed()
@@ -268,7 +308,7 @@ impl PinturappUi {
 
     fn show_project_card(&self, ui: &mut egui::Ui, path: &std::path::Path) {
         Self::panel_card().show(ui, |ui| {
-            ui.strong("Project");
+            Self::section_header(ui, "PROJECT");
             ui.small(path.display().to_string());
         });
     }

@@ -5,10 +5,17 @@ use eframe::egui;
 impl PinturappUi {
     pub(crate) fn show_toolbar_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show_inside(ui, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(7.0, 0.0);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Pinturapp").strong().color(egui::Color32::from_rgb(218, 224, 236)));
+                ui.label(
+                    egui::RichText::new("[APP] Pinturapp")
+                        .monospace()
+                        .strong()
+                        .size(11.0)
+                        .color(egui::Color32::from_rgb(218, 224, 236)),
+                );
                 ui.separator();
-                ui.menu_button("File", |ui| {
+                ui.menu_button("[F] File", |ui| {
                     if ui.button("New Project    Ctrl+N").clicked() {
                         self.request_load_action(PendingLoadAction::NewProject);
                         ui.close();
@@ -63,7 +70,7 @@ impl PinturappUi {
                         ui.close();
                     }
                 });
-                ui.menu_button("Edit", |ui| {
+                ui.menu_button("[E] Edit", |ui| {
                     if ui.button("Undo   Ctrl+Z").clicked() {
                         self.undo_paint();
                         ui.close();
@@ -77,7 +84,7 @@ impl PinturappUi {
                         ui.close();
                     }
                 });
-                ui.menu_button("View", |ui| {
+                ui.menu_button("[V] View", |ui| {
                     if ui.button("Reset Camera").clicked() {
                         self.orbit_yaw = 0.5;
                         self.orbit_pitch = 0.25;
@@ -89,16 +96,24 @@ impl PinturappUi {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if self.is_dirty {
-                        ui.colored_label(egui::Color32::from_rgb(255, 178, 85), "Unsaved changes");
+                        ui.colored_label(egui::Color32::from_rgb(255, 178, 85), "[*] Unsaved");
                     }
                     if let Some(path) = &self.current_project_path {
                         let name = path
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "Untitled".to_string());
-                        ui.label(egui::RichText::new(name).color(egui::Color32::from_rgb(206, 213, 226)));
+                        ui.label(
+                            egui::RichText::new(format!("[P] {name}"))
+                                .monospace()
+                                .color(egui::Color32::from_rgb(206, 213, 226)),
+                        );
                     } else {
-                        ui.label(egui::RichText::new("Untitled project").color(egui::Color32::from_rgb(170, 178, 194)));
+                        ui.label(
+                            egui::RichText::new("[P] Untitled")
+                                .monospace()
+                                .color(egui::Color32::from_rgb(170, 178, 194)),
+                        );
                     }
                 });
             });

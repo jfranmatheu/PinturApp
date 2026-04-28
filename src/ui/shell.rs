@@ -8,7 +8,7 @@ impl PinturappUi {
             .fill(egui::Color32::from_rgb(32, 35, 41))
             .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(58, 62, 74)))
             .corner_radius(egui::CornerRadius::same(6))
-            .inner_margin(egui::Margin::same(12))
+            .inner_margin(egui::Margin::same(10))
     }
 
     pub(crate) fn apply_modern_theme(&mut self, ctx: &egui::Context) {
@@ -17,8 +17,11 @@ impl PinturappUi {
         }
         ctx.set_visuals(egui::Visuals::dark());
         let mut style = (*ctx.global_style()).clone();
-        style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-        style.spacing.button_padding = egui::vec2(10.0, 6.0);
+        style.spacing.item_spacing = egui::vec2(7.0, 7.0);
+        style.spacing.button_padding = egui::vec2(9.0, 5.0);
+        style.spacing.menu_margin = egui::Margin::same(6);
+        style.spacing.indent = 14.0;
+        style.spacing.slider_width = 150.0;
         style.visuals.panel_fill = egui::Color32::from_rgb(36, 39, 46);
         style.visuals.window_fill = egui::Color32::from_rgb(42, 45, 52);
         style.visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(68, 72, 84));
@@ -41,6 +44,22 @@ impl PinturappUi {
             egui::Stroke::new(1.0, egui::Color32::from_rgb(131, 169, 238));
         style.visuals.selection.bg_fill = egui::Color32::from_rgb(79, 124, 205);
         style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(222, 230, 244));
+        style.text_styles.insert(
+            egui::TextStyle::Small,
+            egui::FontId::new(11.0, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::new(12.5, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Button,
+            egui::FontId::new(12.0, egui::FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            egui::TextStyle::Heading,
+            egui::FontId::new(16.0, egui::FontFamily::Proportional),
+        );
         ctx.set_global_style(style);
         self.theme_applied = true;
     }
