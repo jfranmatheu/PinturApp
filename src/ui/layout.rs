@@ -138,6 +138,18 @@ impl PinturappUi {
             if ui.color_edit_button_srgba(&mut self.brush_color).changed() {
                 self.is_dirty = true;
             }
+            ui.collapsing("Advanced", |ui| {
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.paint_pipeline_config.padding_iterations, 0..=8)
+                            .text("Seam Padding"),
+                    )
+                    .changed()
+                {
+                    self.is_dirty = true;
+                }
+                ui.small("Higher values pad farther into UV gutter to reduce seam filtering artifacts.");
+            });
             ui.small(format!("Undo: {}", self.undo_stack.len()));
             ui.small(format!("Redo: {}", self.redo_stack.len()));
         });
