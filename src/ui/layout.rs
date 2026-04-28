@@ -6,6 +6,20 @@ use crate::renderer::{
 use eframe::egui;
 
 impl PinturappUi {
+    fn target_preview_size(viewport_size: egui::Vec2) -> [usize; 2] {
+        // Keep software rasterization cost bounded at fullscreen sizes.
+        const MAX_DIM: f32 = 1280.0;
+        let mut w = viewport_size.x.max(1.0);
+        let mut h = viewport_size.y.max(1.0);
+        let max_side = w.max(h);
+        if max_side > MAX_DIM {
+            let scale = MAX_DIM / max_side;
+            w = (w * scale).max(1.0);
+            h = (h * scale).max(1.0);
+        }
+        [w.round() as usize, h.round() as usize]
+    }
+
     fn quantize_pressure(value: f32) -> f32 {
         ((value.clamp(0.0, 1.0) * 100.0).round() / 100.0).clamp(0.0, 1.0)
     }
@@ -225,9 +239,8 @@ impl PinturappUi {
 
                 self.draw_viewport_backdrop(&painter, rect, response.hovered());
                 self.handle_camera_input(ui, &response);
-                let img_w = rect.width().max(1.0).round() as usize;
-                let img_h = rect.height().max(1.0).round() as usize;
-                self.draw_viewport_texture_and_wireframe(ui, &painter, rect, &mesh, [img_w, img_h]);
+                let preview_size = Self::target_preview_size(rect.size());
+                self.draw_viewport_texture_and_wireframe(ui, &painter, rect, &mesh, preview_size);
                 self.handle_paint_input(ui, &response, rect, &mesh);
                 self.draw_viewport_overlay(ui, &painter, rect);
                 self.loaded_mesh = Some(mesh);
@@ -481,7 +494,12 @@ impl PinturappUi {
                 let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
                 let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);
                 if let Some(pick) = &self.preview_pick_buffer
-                    && let Some(sample) = sample_surface_from_buffer(mesh, pick, [sx, sy])
+                {
+                    let pick_w = pick.size[0].max(1) as f32;
+                    let pick_h = pick.size[1].max(1) as f32;
+                    let pick_x = ((sx / rect.width().max(1.0)) * pick_w).clamp(0.0, pick_w - 1.0);
+                    let pick_y = ((sy / rect.height().max(1.0)) * pick_h).clamp(0.0, pick_h - 1.0);
+                    if let Some(sample) = sample_surface_from_buffer(mesh, pick, [pick_x, pick_y])
                 {
                     let pressure_for_size = if self.use_pressure_for_size {
                         self.last_brush_pressure
@@ -511,6 +529,7 @@ impl PinturappUi {
                         },
                     );
                     ui.ctx().request_repaint();
+                }
                 }
             }
         }
