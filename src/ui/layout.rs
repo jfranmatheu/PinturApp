@@ -536,56 +536,91 @@ impl PinturappUi {
                 }
                 let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
                 let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);
+                let spacing = self.brush_sample_distance_px.max(0.5);
+                let mut painted = false;
+
+                if self.last_paint_sample_screen_pos.is_none() {
+                    painted |= self.paint_stamp_at_screen(rect, mesh, sx, sy);
+                    self.last_paint_sample_screen_pos = Some([sx, sy]);
+                }
+
                 if let Some(prev) = self.last_paint_sample_screen_pos {
                     let dx = sx - prev[0];
                     let dy = sy - prev[1];
-                    let min_dist = self.brush_sample_distance_px.max(0.5);
-                    if dx * dx + dy * dy < min_dist * min_dist {
-                        return;
+                    let distance = (dx * dx + dy * dy).sqrt();
+                    if distance >= spacing {
+                        // Fill the entire path between frames with evenly spaced dabs.
+                        let mut traveled = spacing;
+                        let mut steps = 0_u32;
+                        while traveled <= distance + 1e-4 && steps < 1024 {
+                            let t = traveled / distance;
+                            let px = prev[0] + dx * t;
+                            let py = prev[1] + dy * t;
+                            painted |= self.paint_stamp_at_screen(rect, mesh, px, py);
+                            traveled += spacing;
+                            steps += 1;
+                        }
                     }
-                }
-                if let Some(pick) = &self.preview_pick_buffer
-                {
-                    let pick_w = pick.size[0].max(1) as f32;
-                    let pick_h = pick.size[1].max(1) as f32;
-                    let pick_x = ((sx / rect.width().max(1.0)) * pick_w).clamp(0.0, pick_w - 1.0);
-                    let pick_y = ((sy / rect.height().max(1.0)) * pick_h).clamp(0.0, pick_h - 1.0);
-                    if let Some(sample) = sample_surface_from_buffer(mesh, pick, [pick_x, pick_y])
-                {
-                    let pressure_for_size = if self.use_pressure_for_size {
-                        self.last_brush_pressure
-                    } else {
-                        1.0
-                    };
-                    let pressure_for_strength = if self.use_pressure_for_strength {
-                        self.last_brush_pressure
-                    } else {
-                        1.0
-                    };
-                    let brush_size_px = (self.brush_size_px * pressure_for_size).clamp(1.0, 128.0);
-                    self.paint_projected_brush(
-                        mesh,
-                        BrushInput {
-                            hit: sample.hit,
-                            center_world: glam::vec3(sample.world_pos[0], sample.world_pos[1], sample.world_pos[2]),
-                            center_uv: sample.uv,
-                        },
-                        BrushDispatch {
-                            screen_pos: [sx, sy],
-                            radius_px: (brush_size_px * 0.5).max(0.5),
-                            strength: self.brush_strength,
-                            color: self.brush_color.to_array(),
-                            pressure: pressure_for_strength,
-                            blend_mode: self.brush_blend_mode,
-                            falloff: self.brush_falloff,
-                        },
-                    );
                     self.last_paint_sample_screen_pos = Some([sx, sy]);
-                    ui.ctx().request_repaint();
                 }
+
+                if painted {
+                    ui.ctx().request_repaint();
                 }
             }
         }
+    }
+
+    fn paint_stamp_at_screen(
+        &mut self,
+        rect: egui::Rect,
+        mesh: &crate::io::mesh_loader::MeshData,
+        sx: f32,
+        sy: f32,
+    ) -> bool {
+        let sample = if let Some(pick) = &self.preview_pick_buffer {
+            let pick_w = pick.size[0].max(1) as f32;
+            let pick_h = pick.size[1].max(1) as f32;
+            let pick_x = ((sx / rect.width().max(1.0)) * pick_w).clamp(0.0, pick_w - 1.0);
+            let pick_y = ((sy / rect.height().max(1.0)) * pick_h).clamp(0.0, pick_h - 1.0);
+            sample_surface_from_buffer(mesh, pick, [pick_x, pick_y])
+        } else {
+            None
+        };
+
+        let Some(sample) = sample else {
+            return false;
+        };
+
+        let pressure_for_size = if self.use_pressure_for_size {
+            self.last_brush_pressure
+        } else {
+            1.0
+        };
+        let pressure_for_strength = if self.use_pressure_for_strength {
+            self.last_brush_pressure
+        } else {
+            1.0
+        };
+        let brush_size_px = (self.brush_size_px * pressure_for_size).clamp(1.0, 128.0);
+        self.paint_projected_brush(
+            mesh,
+            BrushInput {
+                hit: sample.hit,
+                center_world: glam::vec3(sample.world_pos[0], sample.world_pos[1], sample.world_pos[2]),
+                center_uv: sample.uv,
+            },
+            BrushDispatch {
+                screen_pos: [sx, sy],
+                radius_px: (brush_size_px * 0.5).max(0.5),
+                strength: self.brush_strength,
+                color: self.brush_color.to_array(),
+                pressure: pressure_for_strength,
+                blend_mode: self.brush_blend_mode,
+                falloff: self.brush_falloff,
+            },
+        );
+        true
     }
 
     fn draw_viewport_texture_and_wireframe(
