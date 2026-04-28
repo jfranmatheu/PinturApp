@@ -145,4 +145,3 @@ fn parse_face_vertex(token: &str, line_number: usize) -> Result<(usize, usize), 
 
     Ok((pos_idx - 1, uv_idx - 1))
 }
-

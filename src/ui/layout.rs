@@ -1,5 +1,5 @@
 use crate::PinturappUi;
-use crate::renderer::{draw_mesh_wireframe, pick_uv_at_screen, render_textured_preview};
+use crate::renderer::{draw_mesh_wireframe, pick_paint_uv_targets_at_screen, render_textured_preview};
 use eframe::egui;
 
 impl PinturappUi {
@@ -152,7 +152,7 @@ impl PinturappUi {
     fn handle_camera_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
         if response.dragged_by(egui::PointerButton::Secondary) {
             let delta = ui.ctx().input(|i| i.pointer.delta());
-            self.orbit_yaw -= delta.x * 0.01;
+            self.orbit_yaw += delta.x * 0.01;
             self.orbit_pitch = (self.orbit_pitch + delta.y * 0.01).clamp(-1.4, 1.4);
             self.is_dirty = true;
         }
@@ -193,7 +193,7 @@ impl PinturappUi {
                 }
                 let sx = (pointer_pos.x - rect.left()).clamp(0.0, rect.width() - 1.0);
                 let sy = (pointer_pos.y - rect.top()).clamp(0.0, rect.height() - 1.0);
-                if let Some(uv) = pick_uv_at_screen(
+                let paint_targets = pick_paint_uv_targets_at_screen(
                     mesh,
                     self.mesh_center,
                     self.mesh_fit_scale,
@@ -202,7 +202,8 @@ impl PinturappUi {
                     self.orbit_distance,
                     image_size,
                     [sx, sy],
-                ) {
+                );
+                for uv in paint_targets {
                     self.paint_at_uv(uv);
                 }
             }

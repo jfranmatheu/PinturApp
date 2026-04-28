@@ -92,7 +92,46 @@ pub fn render_textured_preview(
     ColorImage::from_rgba_unmultiplied([width, height], &pixels)
 }
 
-pub fn pick_uv_at_screen(
+pub fn pick_paint_uv_targets_at_screen(
+    mesh: &MeshData,
+    center: Vec3,
+    fit_scale: f32,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+    size: [usize; 2],
+    screen: [f32; 2],
+) -> Vec<[f32; 2]> {
+    let mut targets = Vec::new();
+    let mut seen: HashSet<(i32, i32)> = HashSet::new();
+
+    // Sample a compact screen-space neighborhood so paint crosses visible seams locally,
+    // while avoiding UV alias projection that can jump to unrelated islands.
+    let sample_offsets: &[(f32, f32)] = &[
+        (0.0, 0.0),
+        (1.0, 0.0),
+        (-1.0, 0.0),
+        (0.0, 1.0),
+        (0.0, -1.0),
+        (1.0, 1.0),
+        (1.0, -1.0),
+        (-1.0, 1.0),
+        (-1.0, -1.0),
+        (2.0, 0.0),
+        (-2.0, 0.0),
+        (0.0, 2.0),
+        (0.0, -2.0),
+    ];
+    for (ox, oy) in sample_offsets {
+        if let Some(uv) = pick_uv_at_screen(mesh, center, fit_scale, yaw, pitch, distance, size, [screen[0] + *ox, screen[1] + *oy]) {
+            push_unique_uv(&mut targets, &mut seen, uv);
+        }
+    }
+
+    targets
+}
+
+fn pick_uv_at_screen(
     mesh: &MeshData,
     center: Vec3,
     fit_scale: f32,
@@ -163,6 +202,16 @@ pub fn pick_uv_at_screen(
     }
 
     best_uv
+}
+
+fn push_unique_uv(targets: &mut Vec<[f32; 2]>, seen: &mut HashSet<(i32, i32)>, uv: [f32; 2]) {
+    let key = (
+        (uv[0] * 1_000_000.0).round() as i32,
+        (uv[1] * 1_000_000.0).round() as i32,
+    );
+    if seen.insert(key) {
+        targets.push(uv);
+    }
 }
 
 pub fn draw_mesh_wireframe(
