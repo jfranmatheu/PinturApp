@@ -461,7 +461,17 @@ impl PinturappUi {
             {
                 self.is_dirty = true;
             }
+            if ui
+                .checkbox(
+                    &mut self.paint_pipeline_config.use_gpu_compute_experimental,
+                    "GPU Compute (Experimental)",
+                )
+                .changed()
+            {
+                self.is_dirty = true;
+            }
             ui.small("Higher values pad farther into UV gutter to reduce seam filtering artifacts.");
+            ui.small("GPU compute path paints in UV-space on GPU and falls back to CPU if unavailable.");
         });
     }
 

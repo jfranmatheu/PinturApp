@@ -132,6 +132,7 @@ impl PinturappUi {
             let mut texture = texture;
             let mut coverage_cache = UvCoverageCache::default();
             let mut painted_since_preview = false;
+            let mut pending_stamps: Vec<(BrushInput, BrushDispatch)> = Vec::new();
             let mut last_preview = Instant::now();
             let preview_interval = Duration::from_millis(24);
 
@@ -144,16 +145,7 @@ impl PinturappUi {
                 let mut pending_finish = false;
                 match command {
                     PaintWorkerCommand::Stamp { input, dispatch } => {
-                        if paint_projected_brush_into(
-                            &mut texture,
-                            &mesh,
-                            input,
-                            dispatch,
-                            Some(&mut coverage_cache),
-                            &config,
-                        ) {
-                            painted_since_preview = true;
-                        }
+                        pending_stamps.push((input, dispatch));
                     }
                     PaintWorkerCommand::Finish => pending_finish = true,
                     PaintWorkerCommand::Abort => break,
@@ -170,20 +162,41 @@ impl PinturappUi {
                     };
                     match next {
                         PaintWorkerCommand::Stamp { input, dispatch } => {
-                            if paint_projected_brush_into(
-                                &mut texture,
-                                &mesh,
-                                input,
-                                dispatch,
-                                Some(&mut coverage_cache),
-                                &config,
-                            ) {
-                                painted_since_preview = true;
-                            }
+                            pending_stamps.push((input, dispatch));
                         }
                         PaintWorkerCommand::Finish => pending_finish = true,
                         PaintWorkerCommand::Abort => return,
                     }
+                }
+
+                if !pending_stamps.is_empty() {
+                    let mut batch_painted = false;
+                    let use_gpu = config.use_gpu_compute_experimental && pending_stamps.len() >= 8;
+                    if use_gpu
+                        && crate::renderer::gpu_paint::try_paint_stamps_gpu(
+                            &mut texture,
+                            &pending_stamps,
+                            &mut coverage_cache,
+                            &mesh,
+                        )
+                    {
+                        batch_painted = true;
+                    } else {
+                        for (input, dispatch) in &pending_stamps {
+                            if paint_projected_brush_into(
+                                &mut texture,
+                                &mesh,
+                                *input,
+                                *dispatch,
+                                Some(&mut coverage_cache),
+                                &config,
+                            ) {
+                                batch_painted = true;
+                            }
+                        }
+                    }
+                    pending_stamps.clear();
+                    painted_since_preview |= batch_painted;
                 }
 
                 if painted_since_preview && last_preview.elapsed() >= preview_interval {

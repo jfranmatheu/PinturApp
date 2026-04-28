@@ -29,6 +29,7 @@ impl PinturappUi {
             use_pressure_for_size: self.use_pressure_for_size,
             use_pressure_for_strength: self.use_pressure_for_strength,
             seam_padding_iterations: self.paint_pipeline_config.padding_iterations,
+            use_gpu_compute_experimental: self.paint_pipeline_config.use_gpu_compute_experimental,
         }
     }
 
@@ -51,6 +52,7 @@ impl PinturappUi {
         self.use_pressure_for_size = state.use_pressure_for_size;
         self.use_pressure_for_strength = state.use_pressure_for_strength;
         self.paint_pipeline_config.padding_iterations = state.seam_padding_iterations.clamp(0, 8);
+        self.paint_pipeline_config.use_gpu_compute_experimental = state.use_gpu_compute_experimental;
 
         self.loaded_mesh = None;
         self.last_loaded_path = None;

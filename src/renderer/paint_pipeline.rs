@@ -9,11 +9,15 @@ use std::hash::{Hash, Hasher};
 #[derive(Debug, Clone)]
 pub struct PaintPipelineConfig {
     pub padding_iterations: usize,
+    pub use_gpu_compute_experimental: bool,
 }
 
 impl Default for PaintPipelineConfig {
     fn default() -> Self {
-        Self { padding_iterations: 2 }
+        Self {
+            padding_iterations: 2,
+            use_gpu_compute_experimental: true,
+        }
     }
 }
 
@@ -33,7 +37,7 @@ pub struct UvCoverageCache {
 }
 
 impl UvCoverageCache {
-    fn ensure_for(&mut self, mesh: &MeshData, width: usize, height: usize) {
+    pub(crate) fn ensure_for(&mut self, mesh: &MeshData, width: usize, height: usize) {
         let signature = mesh_signature(mesh);
         if self.width == width
             && self.height == height
@@ -58,7 +62,7 @@ impl UvCoverageCache {
         self.mesh_signature = signature;
     }
 
-    fn coverage(&self) -> &[bool] {
+    pub(crate) fn coverage(&self) -> &[bool] {
         &self.covered
     }
 

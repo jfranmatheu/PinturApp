@@ -19,3 +19,4 @@ zip = { version = "0.6", default-features = false, features = ["deflate"] }
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Accessibility"] }
 libloading = "0.8"
 wintab_lite = "0.1"
+bytemuck = { version = "1.19", features = ["derive"] }

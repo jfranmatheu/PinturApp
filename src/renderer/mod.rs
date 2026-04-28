@@ -1,3 +1,4 @@
+pub mod gpu_paint;
 pub mod paint_pipeline;
 pub mod preview;
 

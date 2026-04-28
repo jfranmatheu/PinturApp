@@ -30,10 +30,16 @@ pub struct ProjectState {
     pub use_pressure_for_strength: bool,
     #[serde(default = "default_seam_padding_iterations")]
     pub seam_padding_iterations: usize,
+    #[serde(default = "default_use_gpu_compute_experimental")]
+    pub use_gpu_compute_experimental: bool,
 }
 
 fn default_seam_padding_iterations() -> usize {
     2
+}
+
+fn default_use_gpu_compute_experimental() -> bool {
+    true
 }
 
 fn default_brush_blend_mode() -> BrushBlendMode {
