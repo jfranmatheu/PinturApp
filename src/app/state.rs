@@ -12,6 +12,12 @@ pub struct ProjectState {
     pub orbit_distance: f32,
     pub brush_radius_px: f32,
     pub brush_color_rgba: [u8; 4],
+    #[serde(default = "default_seam_padding_iterations")]
+    pub seam_padding_iterations: usize,
+}
+
+fn default_seam_padding_iterations() -> usize {
+    2
 }
 
 #[derive(Debug, Clone)]
