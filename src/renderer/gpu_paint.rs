@@ -1,13 +1,15 @@
+use crate::io::mesh_loader::MeshData;
 use crate::renderer::{BrushBlendMode, BrushDispatch, BrushFalloff, BrushInput, UvCoverageCache};
 use bytemuck::{Pod, Zeroable};
 use eframe::wgpu;
 use image::RgbaImage;
+use std::sync::mpsc;
 use std::sync::{Arc, OnceLock};
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct StampGpu {
-    center_uv: [f32; 2],
+    center_texel: [f32; 2],
     radius_texels: f32,
     strength: f32,
     color_rgba: u32,
@@ -23,6 +25,10 @@ struct ParamsGpu {
     height: u32,
     stamp_count: u32,
     _pad0: u32,
+    min_x: u32,
+    min_y: u32,
+    max_x: u32,
+    max_y: u32,
 }
 
 #[derive(Clone)]
@@ -36,8 +42,7 @@ static GPU_RUNTIME: OnceLock<Option<GpuRuntime>> = OnceLock::new();
 fn gpu_runtime() -> Option<GpuRuntime> {
     GPU_RUNTIME
         .get_or_init(|| {
-            let instance =
-                wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
             let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
@@ -93,10 +98,14 @@ struct Params {
     height: u32,
     stamp_count: u32,
     _pad0: u32,
+    min_x: u32,
+    min_y: u32,
+    max_x: u32,
+    max_y: u32,
 }
 
 struct Stamp {
-    center_uv: vec2<f32>,
+    center_texel: vec2<f32>,
     radius_texels: f32,
     strength: f32,
     color_rgba: u32,
@@ -129,22 +138,22 @@ fn pack_rgba8(v: vec4<f32>) -> u32 {
 
 fn apply_falloff_curve(t_raw: f32, mode: u32) -> f32 {
     let t = clamp(t_raw, 0.0, 1.0);
-    if mode == 0u { // smooth
+    if mode == 0u {
         return t * t * (3.0 - 2.0 * t);
     }
-    if mode == 1u { // sphere
+    if mode == 1u {
         return sqrt(max(0.0, 1.0 - (1.0 - t) * (1.0 - t)));
     }
-    if mode == 2u { // root
+    if mode == 2u {
         return sqrt(t);
     }
-    if mode == 3u { // sharp
+    if mode == 3u {
         return t * t;
     }
-    if mode == 5u { // constant
+    if mode == 5u {
         return select(0.0, 1.0, t > 0.0);
     }
-    return t; // linear
+    return t;
 }
 
 fn blend_channel(src: f32, dst: f32, alpha: f32, mode: u32) -> f32 {
@@ -159,26 +168,30 @@ fn blend_channel(src: f32, dst: f32, alpha: f32, mode: u32) -> f32 {
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
-    let pixel_count = params.width * params.height;
-    if idx >= pixel_count {
+    let region_w = (params.max_x - params.min_x) + 1u;
+    let region_h = (params.max_y - params.min_y) + 1u;
+    let region_count = region_w * region_h;
+    let local_idx = gid.x;
+    if local_idx >= region_count {
+        return;
+    }
+    let x = params.min_x + (local_idx % region_w);
+    let y = params.min_y + (local_idx / region_w);
+    let idx = y * params.width + x;
+    if idx >= params.width * params.height {
         return;
     }
     if coverage[idx] == 0u {
         return;
     }
 
-    let x = idx % params.width;
-    let y = idx / params.width;
-    let denom_x = max(f32(params.width - 1u), 1.0);
-    let denom_y = max(f32(params.height - 1u), 1.0);
-    let uv = vec2<f32>(f32(x) / denom_x, f32(y) / denom_y);
+    let xf = f32(x);
+    let yf = f32(y);
     var dst = unpack_rgba8(pixels[idx]);
-
     for (var i: u32 = 0u; i < params.stamp_count; i = i + 1u) {
         let s = stamps[i];
-        let dx = (uv.x - s.center_uv.x) * denom_x;
-        let dy = (uv.y - s.center_uv.y) * denom_y;
+        let dx = xf - s.center_texel.x;
+        let dy = yf - s.center_texel.y;
         let dist = sqrt(dx * dx + dy * dy);
         if dist > s.radius_texels || s.radius_texels <= 0.0 {
             continue;
@@ -198,249 +211,355 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         dst.b = blend_channel(src.b, dst.b, alpha, s.blend_mode);
         dst.a = 1.0;
     }
-
     pixels[idx] = pack_rgba8(dst);
 }
 "#;
 
-pub fn try_paint_stamps_gpu(
-    texture: &mut RgbaImage,
-    stamps_input: &[(BrushInput, BrushDispatch)],
-    uv_cache: &mut UvCoverageCache,
-    mesh: &crate::io::mesh_loader::MeshData,
-) -> bool {
-    if stamps_input.is_empty() {
-        return false;
-    }
-    let Some(runtime) = gpu_runtime() else {
-        return false;
-    };
-    let width = texture.width().max(1) as usize;
-    let height = texture.height().max(1) as usize;
-    let pixel_count = width * height;
-    uv_cache.ensure_for(mesh, width, height);
+pub struct GpuPaintSession {
+    runtime: GpuRuntime,
+    width: usize,
+    height: usize,
+    pixel_count: usize,
+    pixels_buffer: wgpu::Buffer,
+    coverage_buffer: wgpu::Buffer,
+    stamps_buffer: wgpu::Buffer,
+    params_buffer: wgpu::Buffer,
+    readback_buffer: wgpu::Buffer,
+    stamp_capacity: usize,
+    bind_layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+    bind_group: wgpu::BindGroup,
+    dirty_gpu: bool,
+}
 
-    let mut pixels_u32 = Vec::with_capacity(pixel_count);
-    for p in texture.pixels() {
-        pixels_u32.push(pack_color_rgba(p.0));
+impl GpuPaintSession {
+    pub fn new(texture: &RgbaImage, uv_cache: &mut UvCoverageCache, mesh: &MeshData) -> Option<Self> {
+        let runtime = gpu_runtime()?;
+        let device = runtime.device.clone();
+        let queue = runtime.queue.clone();
+        let width = texture.width().max(1) as usize;
+        let height = texture.height().max(1) as usize;
+        let pixel_count = width * height;
+        uv_cache.ensure_for(mesh, width, height);
+
+        let mut pixels_u32 = Vec::with_capacity(pixel_count);
+        for p in texture.pixels() {
+            pixels_u32.push(pack_color_rgba(p.0));
+        }
+        let mut coverage_u32 = Vec::with_capacity(pixel_count);
+        for covered in uv_cache.coverage() {
+            coverage_u32.push(if *covered { 1_u32 } else { 0_u32 });
+        }
+        let pixel_bytes = bytemuck::cast_slice(&pixels_u32);
+        let coverage_bytes = bytemuck::cast_slice(&coverage_u32);
+
+        let pixels_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pinturapp-gpu-pixels"),
+            size: pixel_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&pixels_buffer, 0, pixel_bytes);
+
+        let coverage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pinturapp-gpu-coverage"),
+            size: coverage_bytes.len() as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&coverage_buffer, 0, coverage_bytes);
+
+        let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pinturapp-gpu-params"),
+            size: std::mem::size_of::<ParamsGpu>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pinturapp-gpu-readback"),
+            size: pixel_bytes.len() as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let stamp_capacity = 256;
+        let stamps_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pinturapp-gpu-stamps"),
+            size: (stamp_capacity * std::mem::size_of::<StampGpu>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("pinturapp-gpu-paint-bind-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("pinturapp-gpu-paint-pipeline-layout"),
+            bind_group_layouts: &[Some(&bind_layout)],
+            immediate_size: 0,
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("pinturapp-gpu-paint-shader"),
+            source: wgpu::ShaderSource::Wgsl(GPU_PAINT_WGSL.into()),
+        });
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("pinturapp-gpu-paint-pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            cache: None,
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pinturapp-gpu-paint-bind-group"),
+            layout: &bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: pixels_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: coverage_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: stamps_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: params_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        Some(Self {
+            runtime,
+            width,
+            height,
+            pixel_count,
+            pixels_buffer,
+            coverage_buffer,
+            stamps_buffer,
+            params_buffer,
+            readback_buffer,
+            stamp_capacity,
+            bind_layout,
+            pipeline,
+            bind_group,
+            dirty_gpu: false,
+        })
     }
 
-    let mut coverage_u32 = Vec::with_capacity(pixel_count);
-    for covered in uv_cache.coverage() {
-        coverage_u32.push(if *covered { 1_u32 } else { 0_u32 });
+    fn ensure_stamp_capacity(&mut self, needed: usize) {
+        if needed <= self.stamp_capacity {
+            return;
+        }
+        let device = self.runtime.device.clone();
+        self.stamp_capacity = needed.next_power_of_two().max(256);
+        self.stamps_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pinturapp-gpu-stamps-resized"),
+            size: (self.stamp_capacity * std::mem::size_of::<StampGpu>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pinturapp-gpu-paint-bind-group-resized"),
+            layout: &self.bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.pixels_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.coverage_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.stamps_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.params_buffer.as_entire_binding(),
+                },
+            ],
+        });
     }
 
-    let mut stamps = Vec::<StampGpu>::with_capacity(stamps_input.len());
-    for (input, dispatch) in stamps_input {
-        let mut color = dispatch.color;
-        color[3] = ((color[3] as f32)
-            * dispatch.strength.clamp(0.0, 1.0)
-            * dispatch.pressure.clamp(0.0, 1.0))
-        .round() as u8;
-        stamps.push(StampGpu {
-            center_uv: input.center_uv,
-            radius_texels: dispatch.radius_px.max(0.5),
-            strength: 1.0,
-            color_rgba: pack_color_rgba(color),
-            blend_mode: blend_to_u32(dispatch.blend_mode),
-            falloff_mode: falloff_to_u32(dispatch.falloff),
+    pub fn apply_stamps(&mut self, stamps_input: &[(BrushInput, BrushDispatch)]) -> bool {
+        if stamps_input.is_empty() {
+            return false;
+        }
+        self.ensure_stamp_capacity(stamps_input.len());
+
+        let tex_w = self.width.max(1) as f32;
+        let tex_h = self.height.max(1) as f32;
+        let mut stamps = Vec::<StampGpu>::with_capacity(stamps_input.len());
+        let mut min_x = self.width as i32 - 1;
+        let mut min_y = self.height as i32 - 1;
+        let mut max_x = 0_i32;
+        let mut max_y = 0_i32;
+
+        for (input, dispatch) in stamps_input {
+            let cx = input.center_uv[0].clamp(0.0, 1.0) * (tex_w - 1.0);
+            let cy = input.center_uv[1].clamp(0.0, 1.0) * (tex_h - 1.0);
+            let radius = dispatch.radius_px.max(0.5);
+            let mut color = dispatch.color;
+            color[3] = ((color[3] as f32)
+                * dispatch.strength.clamp(0.0, 1.0)
+                * dispatch.pressure.clamp(0.0, 1.0))
+            .round() as u8;
+
+            min_x = min_x.min((cx - radius).floor().max(0.0) as i32);
+            min_y = min_y.min((cy - radius).floor().max(0.0) as i32);
+            max_x = max_x.max((cx + radius).ceil().min((self.width - 1) as f32) as i32);
+            max_y = max_y.max((cy + radius).ceil().min((self.height - 1) as f32) as i32);
+
+            stamps.push(StampGpu {
+                center_texel: [cx, cy],
+                radius_texels: radius,
+                strength: 1.0,
+                color_rgba: pack_color_rgba(color),
+                blend_mode: blend_to_u32(dispatch.blend_mode),
+                falloff_mode: falloff_to_u32(dispatch.falloff),
+                _pad0: 0,
+            });
+        }
+
+        if min_x > max_x || min_y > max_y {
+            return false;
+        }
+        let params = ParamsGpu {
+            width: self.width as u32,
+            height: self.height as u32,
+            stamp_count: stamps.len() as u32,
             _pad0: 0,
+            min_x: min_x as u32,
+            min_y: min_y as u32,
+            max_x: max_x as u32,
+            max_y: max_y as u32,
+        };
+
+        let queue = self.runtime.queue.clone();
+        let device = self.runtime.device.clone();
+        queue.write_buffer(&self.stamps_buffer, 0, bytemuck::cast_slice(&stamps));
+        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
+
+        let region_w = (params.max_x - params.min_x + 1) as u64;
+        let region_h = (params.max_y - params.min_y + 1) as u64;
+        let region_count = (region_w * region_h) as u32;
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("pinturapp-gpu-paint-encoder"),
         });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("pinturapp-gpu-paint-pass"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.pipeline);
+            cpass.set_bind_group(0, &self.bind_group, &[]);
+            cpass.dispatch_workgroups(region_count.div_ceil(64), 1, 1);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+        self.dirty_gpu = true;
+        true
     }
 
-    let params = ParamsGpu {
-        width: width as u32,
-        height: height as u32,
-        stamp_count: stamps.len() as u32,
-        _pad0: 0,
-    };
+    pub fn readback_if_dirty(&mut self, texture: &mut RgbaImage) -> bool {
+        if !self.dirty_gpu {
+            return false;
+        }
+        let device = self.runtime.device.clone();
+        let queue = self.runtime.queue.clone();
+        let total_bytes = self.pixel_count * std::mem::size_of::<u32>();
 
-    let pixel_bytes = bytemuck::cast_slice(&pixels_u32);
-    let coverage_bytes = bytemuck::cast_slice(&coverage_u32);
-    let stamps_bytes = bytemuck::cast_slice(&stamps);
-    let params_bytes = bytemuck::bytes_of(&params);
-
-    let device = runtime.device.clone();
-    let queue = runtime.queue.clone();
-
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("pinturapp-gpu-paint-shader"),
-        source: wgpu::ShaderSource::Wgsl(GPU_PAINT_WGSL.into()),
-    });
-
-    let pixels_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("pinturapp-gpu-pixels"),
-        size: pixel_bytes.len() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&pixels_buffer, 0, pixel_bytes);
-
-    let coverage_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("pinturapp-gpu-coverage"),
-        size: coverage_bytes.len() as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&coverage_buffer, 0, coverage_bytes);
-
-    let stamps_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("pinturapp-gpu-stamps"),
-        size: stamps_bytes.len().max(16) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&stamps_buffer, 0, stamps_bytes);
-
-    let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("pinturapp-gpu-params"),
-        size: params_bytes.len() as u64,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    queue.write_buffer(&params_buffer, 0, params_bytes);
-
-    let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("pinturapp-gpu-paint-bind-layout"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
-
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("pinturapp-gpu-paint-pipeline-layout"),
-        bind_group_layouts: &[Some(&bind_layout)],
-        immediate_size: 0,
-    });
-
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("pinturapp-gpu-paint-pipeline"),
-        layout: Some(&pipeline_layout),
-        module: &shader,
-        entry_point: Some("main"),
-        cache: None,
-        compilation_options: wgpu::PipelineCompilationOptions::default(),
-    });
-
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("pinturapp-gpu-paint-bind-group"),
-        layout: &bind_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: pixels_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: coverage_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: stamps_buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: params_buffer.as_entire_binding(),
-            },
-        ],
-    });
-
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("pinturapp-gpu-paint-encoder"),
-    });
-    {
-        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("pinturapp-gpu-paint-pass"),
-            timestamp_writes: None,
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("pinturapp-gpu-readback-encoder"),
         });
-        cpass.set_pipeline(&pipeline);
-        cpass.set_bind_group(0, &bind_group, &[]);
-        let workgroups = (pixel_count as u32).div_ceil(64);
-        cpass.dispatch_workgroups(workgroups, 1, 1);
-    }
+        encoder.copy_buffer_to_buffer(
+            &self.pixels_buffer,
+            0,
+            &self.readback_buffer,
+            0,
+            total_bytes as u64,
+        );
+        queue.submit(std::iter::once(encoder.finish()));
 
-    let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("pinturapp-gpu-paint-readback"),
-        size: pixel_bytes.len() as u64,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    encoder.copy_buffer_to_buffer(
-        &pixels_buffer,
-        0,
-        &readback_buffer,
-        0,
-        pixel_bytes.len() as u64,
-    );
-    queue.submit(std::iter::once(encoder.finish()));
+        let slice = self.readback_buffer.slice(..);
+        let (tx, rx) = mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            let _ = tx.send(res.is_ok());
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let ok = rx.recv().unwrap_or(false);
+        if !ok {
+            return false;
+        }
 
-    let slice = readback_buffer.slice(..);
-    let (tx, rx) = std::sync::mpsc::channel();
-    slice.map_async(wgpu::MapMode::Read, move |res| {
-        let _ = tx.send(res.is_ok());
-    });
-    let _ = device.poll(wgpu::PollType::wait_indefinitely());
-    let ok = rx.recv().unwrap_or(false);
-    if !ok {
-        return false;
-    }
-    let mapped = slice.get_mapped_range();
-    let out_u32: &[u32] = bytemuck::cast_slice(&mapped);
-    if out_u32.len() != pixel_count {
+        let mapped = slice.get_mapped_range();
+        let out_u32: &[u32] = bytemuck::cast_slice(&mapped);
+        if out_u32.len() != self.pixel_count {
+            drop(mapped);
+            self.readback_buffer.unmap();
+            return false;
+        }
+        for (i, pixel) in texture.pixels_mut().enumerate() {
+            let v = out_u32[i];
+            pixel.0 = [
+                (v & 0xff) as u8,
+                ((v >> 8) & 0xff) as u8,
+                ((v >> 16) & 0xff) as u8,
+                ((v >> 24) & 0xff) as u8,
+            ];
+        }
         drop(mapped);
-        readback_buffer.unmap();
-        return false;
+        self.readback_buffer.unmap();
+        self.dirty_gpu = false;
+        true
     }
-
-    for (i, pixel) in texture.pixels_mut().enumerate() {
-        let v = out_u32[i];
-        pixel.0 = [
-            (v & 0xff) as u8,
-            ((v >> 8) & 0xff) as u8,
-            ((v >> 16) & 0xff) as u8,
-            ((v >> 24) & 0xff) as u8,
-        ];
-    }
-    drop(mapped);
-    readback_buffer.unmap();
-    true
 }

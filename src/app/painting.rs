@@ -133,6 +133,7 @@ impl PinturappUi {
             let mut coverage_cache = UvCoverageCache::default();
             let mut painted_since_preview = false;
             let mut pending_stamps: Vec<(BrushInput, BrushDispatch)> = Vec::new();
+            let mut gpu_session: Option<crate::renderer::gpu_paint::GpuPaintSession> = None;
             let mut last_preview = Instant::now();
             let preview_interval = Duration::from_millis(24);
 
@@ -171,16 +172,17 @@ impl PinturappUi {
 
                 if !pending_stamps.is_empty() {
                     let mut batch_painted = false;
-                    let use_gpu = config.use_gpu_compute_experimental && pending_stamps.len() >= 8;
-                    if use_gpu
-                        && crate::renderer::gpu_paint::try_paint_stamps_gpu(
-                            &mut texture,
-                            &pending_stamps,
-                            &mut coverage_cache,
-                            &mesh,
-                        )
-                    {
-                        batch_painted = true;
+                    if config.use_gpu_compute_experimental {
+                        if gpu_session.is_none() {
+                            gpu_session =
+                                crate::renderer::gpu_paint::GpuPaintSession::new(&texture, &mut coverage_cache, &mesh);
+                        }
+                    } else {
+                        gpu_session = None;
+                    }
+
+                    if let Some(session) = gpu_session.as_mut() {
+                        batch_painted = session.apply_stamps(&pending_stamps);
                     } else {
                         for (input, dispatch) in &pending_stamps {
                             if paint_projected_brush_into(
@@ -200,6 +202,9 @@ impl PinturappUi {
                 }
 
                 if painted_since_preview && last_preview.elapsed() >= preview_interval {
+                    if let Some(session) = gpu_session.as_mut() {
+                        let _ = session.readback_if_dirty(&mut texture);
+                    }
                     if event_tx.send(PaintWorkerEvent::Preview(texture.clone())).is_err() {
                         return;
                     }
@@ -208,6 +213,9 @@ impl PinturappUi {
                 }
 
                 if pending_finish {
+                    if let Some(session) = gpu_session.as_mut() {
+                        let _ = session.readback_if_dirty(&mut texture);
+                    }
                     let _ = event_tx.send(PaintWorkerEvent::Finished(texture));
                     return;
                 }
