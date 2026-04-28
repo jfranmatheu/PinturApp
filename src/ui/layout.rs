@@ -56,42 +56,14 @@ impl PinturappUi {
             .show_inside(ui, |ui| {
                 ui.heading("Layers");
                 ui.separator();
-                Self::panel_card().show(ui, |ui| {
-                    ui.strong("Viewport Controls");
-                    ui.small("LMB Drag: Paint");
-                    ui.small("RMB Drag: Orbit");
-                    ui.small("Scroll: Zoom");
-                });
+                self.show_viewport_controls_card(ui);
                 ui.add_space(8.0);
-                Self::panel_card().show(ui, |ui| {
-                    ui.strong("Material");
-                    if let Some(path) = &self.loaded_texture_path {
-                        ui.small(format!("Texture: {}", path.display()));
-                    } else {
-                        ui.small("Texture: UV gradient fallback");
-                    }
-                });
+                self.show_material_card(ui);
                 ui.add_space(8.0);
-                Self::panel_card().show(ui, |ui| {
-                    ui.strong("Brush");
-                    if ui
-                        .add(egui::Slider::new(&mut self.brush_radius_px, 1.0..=64.0).text("Radius"))
-                        .changed()
-                    {
-                        self.is_dirty = true;
-                    }
-                    if ui.color_edit_button_srgba(&mut self.brush_color).changed() {
-                        self.is_dirty = true;
-                    }
-                    ui.small(format!("Undo: {}", self.undo_stack.len()));
-                    ui.small(format!("Redo: {}", self.redo_stack.len()));
-                });
+                self.show_brush_card(ui);
                 if let Some(path) = &self.current_project_path {
                     ui.add_space(8.0);
-                    Self::panel_card().show(ui, |ui| {
-                        ui.strong("Project");
-                        ui.small(path.display().to_string());
-                    });
+                    self.show_project_card(ui, path);
                 }
             });
     }
@@ -131,6 +103,50 @@ impl PinturappUi {
                 v0.position[0], v0.position[1], v0.position[2], v0.uv[0], v0.uv[1]
             ));
         }
+    }
+
+    fn show_viewport_controls_card(&self, ui: &mut egui::Ui) {
+        Self::panel_card().show(ui, |ui| {
+            ui.strong("Viewport Controls");
+            ui.small("LMB Drag: Paint");
+            ui.small("RMB Drag: Orbit");
+            ui.small("Scroll: Zoom");
+        });
+    }
+
+    fn show_material_card(&self, ui: &mut egui::Ui) {
+        Self::panel_card().show(ui, |ui| {
+            ui.strong("Material");
+            if let Some(path) = &self.loaded_texture_path {
+                ui.small(format!("Texture: {}", path.display()));
+            } else {
+                ui.small("Texture: UV gradient fallback");
+            }
+        });
+    }
+
+    fn show_brush_card(&mut self, ui: &mut egui::Ui) {
+        Self::panel_card().show(ui, |ui| {
+            ui.strong("Brush");
+            if ui
+                .add(egui::Slider::new(&mut self.brush_radius_px, 1.0..=64.0).text("Radius"))
+                .changed()
+            {
+                self.is_dirty = true;
+            }
+            if ui.color_edit_button_srgba(&mut self.brush_color).changed() {
+                self.is_dirty = true;
+            }
+            ui.small(format!("Undo: {}", self.undo_stack.len()));
+            ui.small(format!("Redo: {}", self.redo_stack.len()));
+        });
+    }
+
+    fn show_project_card(&self, ui: &mut egui::Ui, path: &std::path::Path) {
+        Self::panel_card().show(ui, |ui| {
+            ui.strong("Project");
+            ui.small(path.display().to_string());
+        });
     }
 
     fn handle_camera_input(&mut self, ui: &egui::Ui, response: &egui::Response) {
