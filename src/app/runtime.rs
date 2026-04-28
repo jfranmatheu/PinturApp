@@ -15,6 +15,6 @@ pub fn run() -> eframe::Result<()> {
     eframe::run_native(
         "Pinturapp - 3D Texture Painter",
         options,
-        Box::new(|_cc| Ok(Box::<PinturappUi>::default())),
+        Box::new(|cc| Ok(Box::new(PinturappUi::new(cc)))),
     )
 }

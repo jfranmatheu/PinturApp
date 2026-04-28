@@ -1,6 +1,7 @@
 use crate::PinturappUi;
 use crate::app::{default_storage_dir, load_recent_projects};
 use crate::renderer::{BrushBlendMode, BrushFalloff};
+use eframe::CreationContext;
 use eframe::egui;
 use glam::Vec3;
 use std::collections::VecDeque;
@@ -64,5 +65,14 @@ impl Default for PinturappUi {
             show_welcome_overlay: true,
             theme_applied: false,
         }
+    }
+}
+
+impl PinturappUi {
+    pub(crate) fn new(cc: &CreationContext<'_>) -> Self {
+        if let Some(state) = cc.wgpu_render_state.as_ref() {
+            crate::renderer::gpu_paint::install_shared_runtime(state.device.clone(), state.queue.clone());
+        }
+        Self::default()
     }
 }

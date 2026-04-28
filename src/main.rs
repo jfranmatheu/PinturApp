@@ -84,9 +84,6 @@ struct PinturappUi {
 
 impl eframe::App for PinturappUi {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        if let Some(state) = frame.wgpu_render_state() {
-            crate::renderer::gpu_paint::install_shared_runtime(state.device.clone(), state.queue.clone());
-        }
         #[cfg(target_os = "windows")]
         crate::platform::windows_pen::install(frame);
         #[cfg(target_os = "windows")]
