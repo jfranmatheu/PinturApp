@@ -1,8 +1,6 @@
 use crate::PinturappUi;
 use crate::io::mesh_loader::MeshData;
-use crate::renderer::{
-    SurfaceHit, apply_brush_mask, apply_texture_padding, build_projected_brush_mask, hit_brush_center_and_radius,
-};
+use crate::renderer::{SurfaceHit, paint_projected_brush_into};
 use image::RgbaImage;
 
 impl PinturappUi {
@@ -63,26 +61,17 @@ impl PinturappUi {
 
     pub(crate) fn paint_projected_brush(&mut self, mesh: &MeshData, hit: SurfaceHit) {
         self.ensure_albedo_texture();
-        let Some(texture_ref) = self.albedo_texture.as_ref() else {
-            return;
-        };
-        let w = texture_ref.width().max(1) as usize;
-        let h = texture_ref.height().max(1) as usize;
-        let Some((center_pos, world_radius)) = hit_brush_center_and_radius(mesh, hit, w, h, self.brush_radius_px)
-        else {
-            return;
-        };
-        let Some(mask) = build_projected_brush_mask(mesh, center_pos, world_radius, w, h) else {
-            return;
-        };
-
         let Some(texture) = self.albedo_texture.as_mut() else {
             return;
         };
-        let src = self.brush_color.to_array();
-        let src_alpha = src[3] as f32 / 255.0;
-        if apply_brush_mask(texture, &mask, src, src_alpha) {
-            apply_texture_padding(texture, mesh, &mask, 2);
+        if paint_projected_brush_into(
+            texture,
+            mesh,
+            hit,
+            self.brush_radius_px,
+            self.brush_color.to_array(),
+            &self.paint_pipeline_config,
+        ) {
             self.is_dirty = true;
         }
     }

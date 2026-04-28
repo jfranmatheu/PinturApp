@@ -12,7 +12,7 @@ mod ui;
 use app::PendingLoadAction;
 use image::RgbaImage;
 use io::mesh_loader::MeshData;
-use renderer::ScreenPickBuffer;
+use renderer::{PaintPipelineConfig, ScreenPickBuffer};
 
 struct PinturappUi {
     loaded_mesh: Option<MeshData>,
@@ -27,6 +27,7 @@ struct PinturappUi {
     albedo_texture: Option<RgbaImage>,
     preview_texture: Option<TextureHandle>,
     preview_pick_buffer: Option<ScreenPickBuffer>,
+    paint_pipeline_config: PaintPipelineConfig,
     brush_radius_px: f32,
     brush_color: egui::Color32,
     undo_stack: VecDeque<RgbaImage>,

@@ -26,6 +26,7 @@ impl Default for PinturappUi {
             albedo_texture: None,
             preview_texture: None,
             preview_pick_buffer: None,
+            paint_pipeline_config: Default::default(),
             brush_radius_px: 12.0,
             brush_color: egui::Color32::from_rgba_unmultiplied(255, 90, 90, 255),
             undo_stack: VecDeque::new(),

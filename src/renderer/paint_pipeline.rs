@@ -3,6 +3,17 @@ use crate::renderer::SurfaceHit;
 use glam::{Vec2, Vec3, vec3};
 use image::RgbaImage;
 
+#[derive(Debug, Clone)]
+pub struct PaintPipelineConfig {
+    pub padding_iterations: usize,
+}
+
+impl Default for PaintPipelineConfig {
+    fn default() -> Self {
+        Self { padding_iterations: 2 }
+    }
+}
+
 pub struct BrushMask {
     weights: Vec<f32>,
     touched: Vec<usize>,
@@ -29,6 +40,31 @@ impl BrushMask {
     pub fn is_empty(&self) -> bool {
         self.touched.is_empty()
     }
+}
+
+pub fn paint_projected_brush_into(
+    texture: &mut RgbaImage,
+    mesh: &MeshData,
+    hit: SurfaceHit,
+    brush_radius_px: f32,
+    brush_color: [u8; 4],
+    config: &PaintPipelineConfig,
+) -> bool {
+    let w = texture.width().max(1) as usize;
+    let h = texture.height().max(1) as usize;
+    let Some((center_pos, world_radius)) = hit_brush_center_and_radius(mesh, hit, w, h, brush_radius_px) else {
+        return false;
+    };
+    let Some(mask) = build_projected_brush_mask(mesh, center_pos, world_radius, w, h) else {
+        return false;
+    };
+
+    let src_alpha = brush_color[3] as f32 / 255.0;
+    let painted = apply_brush_mask(texture, &mask, brush_color, src_alpha);
+    if painted {
+        apply_texture_padding(texture, mesh, &mask, config.padding_iterations);
+    }
+    painted
 }
 
 pub fn hit_brush_center_and_radius(
