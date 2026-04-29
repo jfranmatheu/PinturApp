@@ -7,6 +7,20 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 impl PinturappUi {
+    fn refresh_gpu_snapshot_from_albedo(&mut self) {
+        if !self.paint_pipeline_config.use_gpu_compute_experimental {
+            self.gpu_albedo_snapshot = None;
+            return;
+        }
+        let (Some(texture), Some(mesh)) = (self.albedo_texture.as_ref(), self.loaded_mesh.as_ref()) else {
+            self.gpu_albedo_snapshot = None;
+            return;
+        };
+        let cache = self.uv_coverage_cache.get_or_insert_with(Default::default);
+        self.gpu_albedo_snapshot = crate::renderer::gpu_paint::GpuPaintSession::new(texture, cache, mesh)
+            .map(|session| session.snapshot());
+    }
+
     pub(crate) fn clear_history(&mut self) {
         self.undo_stack.clear();
         self.redo_stack.clear();
@@ -54,9 +68,7 @@ impl PinturappUi {
             self.redo_stack.pop_front();
         }
         self.albedo_texture = Some(previous);
-        // In GPU viewport mode the renderer samples gpu_albedo_snapshot directly.
-        // Invalidate it so undo state is actually reflected on screen.
-        self.gpu_albedo_snapshot = None;
+        self.refresh_gpu_snapshot_from_albedo();
         self.is_dirty = true;
         self.viewport_needs_refresh = true;
     }
@@ -75,9 +87,7 @@ impl PinturappUi {
             self.undo_stack.pop_front();
         }
         self.albedo_texture = Some(next);
-        // In GPU viewport mode the renderer samples gpu_albedo_snapshot directly.
-        // Invalidate it so redo state is actually reflected on screen.
-        self.gpu_albedo_snapshot = None;
+        self.refresh_gpu_snapshot_from_albedo();
         self.is_dirty = true;
         self.viewport_needs_refresh = true;
     }
@@ -118,6 +128,7 @@ impl PinturappUi {
 
         if let Some(texture) = finalized_texture {
             self.albedo_texture = Some(texture);
+            self.refresh_gpu_snapshot_from_albedo();
             self.viewport_needs_refresh = true;
             self.is_dirty = true;
             self.paint_worker_tx = None;
