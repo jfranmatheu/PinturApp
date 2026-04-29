@@ -54,6 +54,9 @@ impl PinturappUi {
             self.redo_stack.pop_front();
         }
         self.albedo_texture = Some(previous);
+        // In GPU viewport mode the renderer samples gpu_albedo_snapshot directly.
+        // Invalidate it so undo state is actually reflected on screen.
+        self.gpu_albedo_snapshot = None;
         self.is_dirty = true;
         self.viewport_needs_refresh = true;
     }
@@ -72,6 +75,9 @@ impl PinturappUi {
             self.undo_stack.pop_front();
         }
         self.albedo_texture = Some(next);
+        // In GPU viewport mode the renderer samples gpu_albedo_snapshot directly.
+        // Invalidate it so redo state is actually reflected on screen.
+        self.gpu_albedo_snapshot = None;
         self.is_dirty = true;
         self.viewport_needs_refresh = true;
     }
