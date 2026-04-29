@@ -47,6 +47,22 @@ fn unpack_rgba8(v: u32) -> vec4<f32> {
     return vec4<f32>(r, g, b, a);
 }
 
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let cutoff = vec3<f32>(0.04045);
+    let low = c / 12.92;
+    let high = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(high, low, c <= cutoff);
+}
+
+fn aces_filmic(x: vec3<f32>) -> vec3<f32> {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 @vertex
 fn vs_main(v: VSIn) -> VSOut {
     var out: VSOut;
@@ -107,16 +123,17 @@ fn fs_main(in_f: VSOut, @builtin(front_facing) front_facing: bool) -> @location(
     let y = min(u32(v * f32(h - 1u)), h - 1u);
     let idx = y * w + x;
     let base = unpack_rgba8(pixels[idx]);
+    let base_linear = srgb_to_linear(base.rgb);
     if albedo.lighting_enabled < 0.5 {
-        return base;
+        return vec4<f32>(base_linear, base.a);
     }
     var n = normalize(in_f.normal);
     if !front_facing {
         n = -n;
     }
     let irradiance = env_irradiance(n, albedo.hdri_rotation);
-    let lit_linear = base.rgb * (vec3<f32>(0.03) + irradiance);
-    let mapped = lit_linear / (vec3<f32>(1.0) + lit_linear);
+    let lit_linear = base_linear * (vec3<f32>(0.03) + irradiance);
+    let mapped = aces_filmic(lit_linear);
     return vec4<f32>(mapped, base.a);
 }
 "#;
