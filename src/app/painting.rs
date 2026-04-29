@@ -7,18 +7,40 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 impl PinturappUi {
-    fn refresh_gpu_snapshot_from_albedo(&mut self) {
+    fn refresh_gpu_snapshot_from_albedo_with_mesh(&mut self, mesh: &MeshData) {
         if !self.paint_pipeline_config.use_gpu_compute_experimental {
             self.gpu_albedo_snapshot = None;
             return;
         }
-        let (Some(texture), Some(mesh)) = (self.albedo_texture.as_ref(), self.loaded_mesh.as_ref()) else {
+        let Some(texture) = self.albedo_texture.as_ref() else {
             self.gpu_albedo_snapshot = None;
             return;
         };
         let cache = self.uv_coverage_cache.get_or_insert_with(Default::default);
         self.gpu_albedo_snapshot = crate::renderer::gpu_paint::GpuPaintSession::new(texture, cache, mesh)
             .map(|session| session.snapshot());
+    }
+
+    fn refresh_gpu_snapshot_from_albedo(&mut self) {
+        let Some(mesh) = self.loaded_mesh.clone() else {
+            self.gpu_albedo_snapshot = None;
+            return;
+        };
+        self.refresh_gpu_snapshot_from_albedo_with_mesh(&mesh);
+    }
+
+    pub(crate) fn ensure_gpu_snapshot_ready_for_mesh(&mut self, mesh: &MeshData) {
+        if !self.paint_pipeline_config.use_gpu_compute_experimental {
+            return;
+        }
+        if self.albedo_texture.is_none() {
+            self.ensure_albedo_texture();
+            self.is_dirty = true;
+        }
+        if self.gpu_albedo_snapshot.is_none() {
+            self.refresh_gpu_snapshot_from_albedo_with_mesh(mesh);
+            self.viewport_needs_refresh = true;
+        }
     }
 
     pub(crate) fn clear_history(&mut self) {

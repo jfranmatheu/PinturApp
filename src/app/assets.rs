@@ -47,6 +47,7 @@ impl PinturappUi {
                 self.orbit_yaw = 0.5;
                 self.orbit_pitch = 0.25;
                 self.orbit_distance = 3.0;
+                self.gpu_albedo_snapshot = None;
                 self.viewport_needs_refresh = true;
                 self.is_dirty = true;
                 self.show_welcome_overlay = false;
@@ -73,6 +74,7 @@ impl PinturappUi {
                 self.loaded_texture_path = Some(path);
                 self.last_error = None;
                 self.clear_history();
+                self.gpu_albedo_snapshot = None;
                 self.viewport_needs_refresh = true;
                 self.is_dirty = true;
             }

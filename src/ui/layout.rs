@@ -700,6 +700,7 @@ impl PinturappUi {
         mesh: &crate::io::mesh_loader::MeshData,
         image_size: [usize; 2],
     ) {
+        self.ensure_gpu_snapshot_ready_for_mesh(mesh);
         let can_draw_gpu_viewport = self.paint_pipeline_config.use_gpu_compute_experimental
             && self.gpu_albedo_snapshot.is_some()
             && self.wgpu_target_format.is_some()

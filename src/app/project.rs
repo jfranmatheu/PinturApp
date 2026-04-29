@@ -58,6 +58,7 @@ impl PinturappUi {
         self.last_loaded_path = None;
         self.loaded_texture_path = None;
         self.albedo_texture = None;
+        self.gpu_albedo_snapshot = None;
         self.uv_coverage_cache = None;
         self.viewport_needs_refresh = true;
         self.last_paint_sample_screen_pos = None;
@@ -166,6 +167,7 @@ impl PinturappUi {
         self.last_loaded_path = None;
         self.loaded_texture_path = None;
         self.albedo_texture = None;
+        self.gpu_albedo_snapshot = None;
         self.uv_coverage_cache = None;
         self.preview_texture = None;
         self.preview_pick_buffer = None;
